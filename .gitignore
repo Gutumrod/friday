@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+src/tts_cache/
+voices/
+vault/
+backups/
