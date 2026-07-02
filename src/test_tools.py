@@ -793,7 +793,48 @@ def check_ask_ollama_slow_warning():
     return f"warned once after ~{fake_clock[0]:.0f}s simulated elapsed"
 
 
+def check_dispatch_to_hermes_polls_result():
+    """Mocks the mailbox_utils.py subprocess call + pre-seeds the result.json a real Hermes
+    run would eventually write, to exercise the create->parse-task_id->poll loop without
+    touching the real mailbox or Hermes."""
+    tmp_dir = tempfile.mkdtemp()
+    orig_mailbox_dir = fw.MAILBOX_DIR
+    orig_run = fw.subprocess.run
+    fw.MAILBOX_DIR = tmp_dir
+
+    def fake_run(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        class FakeProc:
+            stdout = "Created: fake_task_1 → inbox/Hermes/\n"
+            stderr = ""
+        return FakeProc()
+
+    fw.subprocess.run = fake_run
+    try:
+        result_dir = os.path.join(tmp_dir, "results", "hermes", "fake_task_1")
+        os.makedirs(result_dir, exist_ok=True)
+        with open(os.path.join(result_dir, "result.json"), "w", encoding="utf-8") as f:
+            f.write('{"status": "completed", "result": "เทสผ่านค่ะ"}')
+        out = fw.tool_dispatch_to_hermes("test title|test message")
+    finally:
+        fw.subprocess.run = orig_run
+        fw.MAILBOX_DIR = orig_mailbox_dir
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    if out != "เทสผ่านค่ะ":
+        raise AssertionError(f"expected the seeded result.json's 'result' field, got: {out!r}")
+    return "create->parse task_id->poll->return result field: ok"
+
+
+def check_dispatch_to_hermes_missing_message_rejected():
+    out = fw.tool_dispatch_to_hermes("แค่ชื่องาน")  # no '|message' part
+    if "รายละเอียด" not in out and "เป้าหมาย" not in out:
+        raise AssertionError(f"expected a request for more detail, got: {out}")
+    return out
+
+
 check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
+check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
+check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
 check("tool_schemas_match_tools", check_tool_schemas_match_tools)
 check("pack_args", check_pack_args)
 check("run_native_tools", check_run_native_tools)

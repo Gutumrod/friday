@@ -31,6 +31,11 @@ JARVIS_VOICE = "th-TH-NiwatNeural"  # Microsoft Niwat (Thai Male) — used only 
 SLOW_WARNING_MESSAGE = "ผมจาวิส รายงานครับ ไฟรเดย์กำลังเจอปัญหา รอสักครู่ครับนาย"
 DEVICE_INDEX = None  # ใส่เลข Index ของไมค์ที่ใช้จริง (เช่น 4 สำหรับ HyperX, 1 สำหรับ Razer X) ถ้าเว้น None จะใช้ไมค์หลักของ Windows
 
+# dispatch_to_hermes — see docs/../shared/decisions/dispatch-to-hermes-contract-2026-07-02.md
+MAILBOX_DIR = r"D:\AI-Workspace\mailbox"
+DISPATCH_TO_HERMES_TIMEOUT = 300  # seconds — contract's "ไม่แน่ใจ" default (Tier 2 ballpark)
+DISPATCH_TO_HERMES_POLL_INTERVAL = 3  # seconds — contract recommends 2-3s
+
 # Disk-persisted cache for synthesized speech, keyed by exact text+voice — fixed phrases like
 # the gated-tool confirm/cancel questions get spoken with the same wording every time, so a
 # repeat skips the TTS network call entirely. Dynamic phrases (app names, search queries) just
@@ -654,6 +659,55 @@ def tool_set_timer(args):
     threading.Thread(target=_fire, daemon=True).start()
     return f"ตั้งเวลาไว้ {minutes:g} นาทีแล้วค่ะ เดี๋ยวเตือนนะคะ"
 
+def tool_dispatch_to_hermes(args):
+    """Dispatch a task to Hermes via the shared pull-based mailbox (mailbox_utils.py) and
+    block until Hermes completes/fails/blocks it or DISPATCH_TO_HERMES_TIMEOUT runs out —
+    same blocking-poll-with-timeout shape as tool_search_web, per the contract both sides
+    agreed to (see dispatch-to-hermes-contract-2026-07-02.md). ponytail: the contract's
+    proposed Hermes-side ACK/REJECT pre-check (a second round-trip before the real dispatch)
+    was deliberately dropped for v1 — a garbled/incomplete task still surfaces via Hermes's
+    own 'blocked' or 'failed' result, same safety net one round-trip later, without doubling
+    mailbox traffic for every call. Add it if garbled-task dispatches turn out to be common in
+    practice. Args format: 'title|message'."""
+    parts = args.strip().strip('"').split("|", 1)
+    title = parts[0].strip() or "Friday task"
+    message = parts[1].strip() if len(parts) > 1 else ""
+    if not message:
+        return "ฟรายเดย์ต้องบอกเป้าหมาย ผลลัพธ์ที่ต้องการ และไฟล์/โฟลเดอร์ที่เกี่ยวข้องให้ Hermes ก่อนส่งงานได้ค่ะ"
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, "mailbox_utils.py", "create", title,
+             "--to", "Hermes", "--message", message, "--priority", "normal"],
+            cwd=MAILBOX_DIR, capture_output=True, text=True, timeout=15,
+        )
+    except Exception as e:
+        return f"ส่งงานให้ Hermes ไม่สำเร็จค่ะ: {e}"
+    match = re.search(r"Created:\s*(\S+)", proc.stdout)
+    if not match:
+        return f"ส่งงานให้ Hermes ไม่สำเร็จค่ะ: {(proc.stdout + proc.stderr).strip() or 'ไม่ทราบสาเหตุ'}"
+    task_id = match.group(1)
+
+    result_path = os.path.join(MAILBOX_DIR, "results", "hermes", task_id, "result.json")
+    error_path = os.path.join(MAILBOX_DIR, "errors", "hermes", task_id, "result.json")
+    deadline = time.time() + DISPATCH_TO_HERMES_TIMEOUT
+    while time.time() < deadline:
+        for path, from_errors in ((result_path, False), (error_path, True)):
+            if not os.path.exists(path):
+                continue
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                continue  # still being written — try again next poll
+            if from_errors or data.get("status") == "failed":
+                return f"Hermes ทำงานไม่สำเร็จค่ะ: {data.get('error') or data.get('result') or 'ไม่ทราบสาเหตุ'}"
+            if data.get("status") == "blocked":
+                return f"Hermes ขอข้อมูลเพิ่มค่ะ: {data.get('result', '')}"
+            return data.get("result") or "Hermes ทำงานเสร็จแล้วค่ะ"
+        time.sleep(DISPATCH_TO_HERMES_POLL_INTERVAL)
+    return f"Hermes ยังทำงานไม่เสร็จภายในเวลาที่รอค่ะ (task_id: {task_id}) เดี๋ยวเช็คผลให้ทีหลังนะคะ"
+
 def tool_empty_recycle_bin(_args=""):
     """Empty the Recycle Bin via the native shell32 API — irreversible, hence confirm-gated (see CONFIRM_GATED)."""
     SHERB_NOCONFIRMATION, SHERB_NOPROGRESSUI, SHERB_NOSOUND = 0x1, 0x2, 0x4
@@ -680,6 +734,7 @@ TOOLS = {
     "media_control": tool_media_control,
     "set_timer": tool_set_timer,
     "empty_recycle_bin": tool_empty_recycle_bin,
+    "dispatch_to_hermes": tool_dispatch_to_hermes,
 }
 # Native Ollama function-calling schemas for every entry in TOOLS above — replaces the old
 # "[TOOL: name(args)] embedded in reply text, parsed with a regex" approach. The model gets
@@ -743,6 +798,13 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "empty_recycle_bin", "description": "ล้างถังรีไซเคิล (ต้องยืนยันจากนายก่อนเสมอ)",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "dispatch_to_hermes",
+        "description": "ส่งงานที่ฟรายเดย์ทำเองไม่ได้ (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ, งานที่ซับซ้อนเกินเครื่องมือที่มี) ให้ Hermes ทำผ่านระบบ mailbox แล้วรอผลลัพธ์",
+        "parameters": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "ชื่องานสั้นๆ"},
+            "message": {"type": "string", "description": "รายละเอียดงานให้ Hermes ทำได้ทันทีโดยไม่ต้องถามกลับ ต้องมีครบ 3 อย่าง: เป้าหมาย (ทำอะไร), ผลลัพธ์ที่ต้องการ (ได้อะไร), และไฟล์/โฟลเดอร์ที่เกี่ยวข้อง (ที่ไหน)"},
+        }, "required": ["title", "message"]}}},
 ]
 
 # tool_* functions above all take one positional string (pre-dating native tool-calling).
@@ -758,6 +820,8 @@ def _pack_args(name, args):
     args = args or {}
     if name == "set_timer":
         return f"{args.get('minutes', '')}|{args.get('message', 'ครบเวลาที่ตั้งไว้แล้วค่ะ')}"
+    if name == "dispatch_to_hermes":
+        return f"{args.get('title', 'Friday task')}|{args.get('message', '')}"
     key = _TOOL_ARG_KEY.get(name)
     return str(args[key]) if key and key in args else ""
 
@@ -861,6 +925,11 @@ CONFIRM_GATED = {
         "cancel": lambda args: f"ยกเลิกการค้นหา '{args}' แล้วค่ะ",
         "execute": _execute_search_web,
     },
+    "dispatch_to_hermes": {
+        "question": lambda args: f"จะส่งงานให้ Hermes ว่า '{args.split('|', 1)[0].strip()}' นะคะ ยืนยันไหมคะ",
+        "cancel": lambda args: f"ยกเลิกการส่งงาน '{args.split('|', 1)[0].strip()}' ให้ Hermes แล้วค่ะ",
+        "execute": tool_dispatch_to_hermes,
+    },
 }
 
 def find_first_gated_tool_call(tool_calls):
@@ -905,7 +974,9 @@ def build_system_prompt():
         "ให้ตอบกลับด้วยประโยคที่สั้นและกระชับมากๆ (ความยาวไม่เกิน 1-2 ประโยคสั้นๆ เท่านั้น) เพื่อความรวดเร็วในการพูดคุย "
         "ลงท้ายด้วยค่ะ/คะ และห้ามใส่อิโมจิหรือสัญลักษณ์พิเศษใดๆ ในข้อความเด็ดขาด\n\n"
         "คุณมีเครื่องมือ (tools) ให้เรียกใช้ผ่านระบบ function-calling โดยตรง เรียกเมื่อจำเป็นเท่านั้น "
-        "งานอื่นนอกเหนือจากเครื่องมือที่มี (สั่งงาน Hermes/OpenClaw, ส่ง Telegram) ยังทำไม่ได้ ให้ปฏิเสธตรงๆ ว่ายังไม่พร้อมค่ะ\n\n"
+        "งานที่ซับซ้อนเกินเครื่องมือที่มี (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ) ให้เรียก dispatch_to_hermes ส่งให้ Hermes ทำแทน "
+        "ต้องบอกเป้าหมาย ผลลัพธ์ที่ต้องการ และไฟล์/โฟลเดอร์ที่เกี่ยวข้องให้ครบก่อนเรียก ถ้านายพูดสั้นเกินไป ให้ถามเพิ่ม 1 คำถามก่อน "
+        "งานอื่นนอกเหนือจากนี้ (สั่งงาน OpenClaw ตรงๆ, ส่ง Telegram) ยังทำไม่ได้ ให้ปฏิเสธตรงๆ ว่ายังไม่พร้อมค่ะ\n\n"
         "ข้อควรระวังสำคัญ: เครื่องมือแทบทุกตัว ยกเว้น get_time, disk_space, system_status, network_status, list_processes "
         "(อ่านข้อมูลอย่างเดียว ไม่มีผลจริง) ยังไม่ทำงานจริงทันทีที่คุณเรียกใช้ "
         "ระบบจะขอยืนยันจากนายก่อนเสมอ ห้ามพูดคำว่า 'จัดการให้แล้ว', 'เรียบร้อยแล้ว' หรือคำอื่นที่แปลว่าทำเสร็จแล้ว "
