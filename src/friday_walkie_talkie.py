@@ -18,7 +18,7 @@ import threading
 import base64
 import hashlib
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from ddgs import DDGS
 
 # Configuration
@@ -632,32 +632,135 @@ def _cancel_reminder_task(task_name):
     except Exception as e:
         print(f"⚠️ Failed to cancel backup reminder task {task_name}: {e}")
 
-def tool_set_timer(args):
-    """Fire-and-forget reminder. Primary path is the same in-process daemon thread as before
-    (immediate, safely serialized against live mic/audio via AUDIO_LOCK/mic_listening in
-    speak()). It's also backed by a Windows Scheduled Task (_schedule_reminder_task) registered
-    in the background right after the thread starts — that backup is what actually fires if
-    Friday's process gets closed mid-countdown, since a daemon thread dies with the process and
-    used to just lose the reminder silently. The thread cancels its own backup right after
-    speaking so a normal run never double-fires. Args format: 'minutes|message'."""
-    parts = args.strip().strip('"').split("|", 1)
-    try:
-        minutes = float(parts[0].strip())
-    except ValueError:
-        return f"ฟรายเดย์ตั้งเวลาจากคำว่า '{args}' ไม่ได้ค่ะ บอกเป็นนาทีมาด้วยนะคะ"
-    message = parts[1].strip() if len(parts) > 1 else "ครบเวลาที่ตั้งไว้แล้วค่ะ"
+# Registry of pending timers/alarms so they can be listed/cancelled by voice — set_timer used
+# to be pure fire-and-forget (no way to ask "what's still pending" or cancel one), the biggest
+# gap in the original design. Shared by tool_set_timer (relative) and tool_set_alarm (absolute
+# clock time) via _register_timer() below.
+_active_timers = []  # each: {"id": int, "fire_at": datetime, "message": str, "task_name": str|None, "cancel_event": threading.Event}
+_timers_lock = threading.Lock()
+_next_timer_id = 1
+
+def _register_timer(seconds, message):
+    """Shared core for tool_set_timer/tool_set_alarm: starts the in-process countdown thread +
+    Task Scheduler backup (see the original tool_set_timer docstring, preserved below, for why
+    both exist) and tracks the entry in _active_timers for list/cancel. The countdown sleeps in
+    <=1s increments on cancel_event instead of one time.sleep(seconds) so tool_cancel_timer can
+    interrupt it — polling, not a real interrupt, but 1s granularity is plenty for a voice
+    reminder."""
+    global _next_timer_id
     reminder = f"เตือนความจำค่ะนาย: {message}"
+    minutes = seconds / 60
+    cancel_event = threading.Event()
+
+    with _timers_lock:
+        timer_id = _next_timer_id
+        _next_timer_id += 1
+        entry = {
+            "id": timer_id, "fire_at": datetime.now() + timedelta(seconds=seconds),
+            "message": message, "task_name": None, "cancel_event": cancel_event,
+        }
+        _active_timers.append(entry)
 
     def _fire():
         task_name = _schedule_reminder_task(minutes, reminder)
-        time.sleep(minutes * 60)
+        entry["task_name"] = task_name
+        remaining = seconds
+        while remaining > 0:
+            if cancel_event.wait(timeout=min(1, remaining)):
+                break
+            remaining -= 1
+        with _timers_lock:
+            if entry in _active_timers:
+                _active_timers.remove(entry)
+        if cancel_event.is_set():
+            if task_name:
+                _cancel_reminder_task(task_name)
+            return
         speak(reminder)
         log_to_vault("assistant", reminder)
         if task_name:
             _cancel_reminder_task(task_name)
 
     threading.Thread(target=_fire, daemon=True).start()
+    return timer_id
+
+def tool_set_timer(args):
+    """Fire-and-forget reminder, relative duration. Primary path is the same in-process daemon
+    thread as before (immediate, safely serialized against live mic/audio via
+    AUDIO_LOCK/mic_listening in speak()). It's also backed by a Windows Scheduled Task
+    (_schedule_reminder_task) registered in the background right after the thread starts —
+    that backup is what actually fires if Friday's process gets closed mid-countdown, since a
+    daemon thread dies with the process and used to just lose the reminder silently. The
+    thread cancels its own backup right after speaking so a normal run never double-fires.
+    Args format: 'minutes|message'."""
+    parts = args.strip().strip('"').split("|", 1)
+    try:
+        minutes = float(parts[0].strip())
+    except ValueError:
+        return f"ฟรายเดย์ตั้งเวลาจากคำว่า '{args}' ไม่ได้ค่ะ บอกเป็นนาทีมาด้วยนะคะ"
+    message = parts[1].strip() if len(parts) > 1 else "ครบเวลาที่ตั้งไว้แล้วค่ะ"
+    _register_timer(minutes * 60, message)
     return f"ตั้งเวลาไว้ {minutes:g} นาทีแล้วค่ะ เดี๋ยวเตือนนะคะ"
+
+def tool_set_alarm(args):
+    """Reminder for a specific clock time instead of set_timer's relative minutes (e.g. 'บอก
+    ตอน 3 ทุ่ม'). Picks the next occurrence of that time — today if it hasn't passed yet, else
+    tomorrow, since Friday only gets a wall-clock time here, not which day นายmeant. Shares
+    _register_timer with set_timer, so both show up in the same list_timers/cancel_timer
+    registry. Args format: 'HH:MM|message'."""
+    parts = args.strip().strip('"').split("|", 1)
+    time_str = parts[0].strip()
+    message = parts[1].strip() if len(parts) > 1 else "ถึงเวลาที่ตั้งไว้แล้วค่ะ"
+    try:
+        hh, mm = (int(x) for x in time_str.split(":"))
+        if not (0 <= hh <= 23 and 0 <= mm <= 59):
+            raise ValueError
+        target = datetime.now().replace(hour=hh, minute=mm, second=0, microsecond=0)
+    except ValueError:
+        return f"ฟรายเดย์ตั้งเวลาจากคำว่า '{time_str}' ไม่ได้ค่ะ บอกเป็น ชั่วโมง:นาที แบบ 24 ชั่วโมง เช่น 21:00 มาด้วยนะคะ"
+    if target <= datetime.now():
+        target += timedelta(days=1)
+    _register_timer((target - datetime.now()).total_seconds(), message)
+    return f"ตั้งเวลาไว้ตอน {hh:02d}:{mm:02d} แล้วค่ะ เดี๋ยวเตือนนะคะ"
+
+def tool_list_timers(_args=""):
+    """Read-only — list every pending timer/alarm with minutes-remaining and its message."""
+    with _timers_lock:
+        timers = sorted(_active_timers, key=lambda t: t["fire_at"])
+    if not timers:
+        return "ตอนนี้ไม่มีเวลาที่ตั้งไว้เลยค่ะ"
+    lines = []
+    for i, t in enumerate(timers, start=1):
+        mins_left = max(0, int((t["fire_at"] - datetime.now()).total_seconds() // 60))
+        lines.append(f"{i}. อีก {mins_left} นาที: {t['message']}")
+    return " ".join(lines)
+
+def tool_cancel_timer(args):
+    """Cancel one or all pending timers/alarms. Matches by 1-based index from list_timers'
+    ordering, by a substring of the reminder message, or (empty/'ทั้งหมด'/'all') cancels
+    everything. Removes from _active_timers immediately here so a list_timers called right
+    after reflects the cancellation without waiting on _fire()'s own <=1s poll to notice."""
+    arg = args.strip().strip('"')
+    with _timers_lock:
+        timers = sorted(_active_timers, key=lambda t: t["fire_at"])
+        if not timers:
+            return "ไม่มีเวลาที่ตั้งไว้ให้ยกเลิกเลยค่ะ"
+        if arg in ("", "ทั้งหมด", "all"):
+            to_cancel = list(timers)
+        else:
+            try:
+                idx = int(arg) - 1
+                to_cancel = [timers[idx]] if 0 <= idx < len(timers) else []
+            except ValueError:
+                to_cancel = [t for t in timers if arg in t["message"]]
+        for t in to_cancel:
+            if t in _active_timers:
+                _active_timers.remove(t)
+    if not to_cancel:
+        return f"หาไม่เจอเวลาที่ตรงกับ '{arg}' ค่ะ"
+    for t in to_cancel:
+        t["cancel_event"].set()
+    return f"ยกเลิกไปแล้ว {len(to_cancel)} รายการค่ะ"
 
 def tool_dispatch_to_hermes(args):
     """Dispatch a task to Hermes via the shared pull-based mailbox (mailbox_utils.py) and
@@ -733,6 +836,9 @@ TOOLS = {
     "clipboard_write": tool_clipboard_write,
     "media_control": tool_media_control,
     "set_timer": tool_set_timer,
+    "set_alarm": tool_set_alarm,
+    "list_timers": tool_list_timers,
+    "cancel_timer": tool_cancel_timer,
     "empty_recycle_bin": tool_empty_recycle_bin,
     "dispatch_to_hermes": tool_dispatch_to_hermes,
 }
@@ -791,10 +897,22 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object", "properties": {
             "action": {"type": "string", "enum": ["play", "pause", "next", "prev"], "description": "คำสั่งควบคุมสื่อ"}}, "required": ["action"]}}},
     {"type": "function", "function": {
-        "name": "set_timer", "description": "ตั้งเวลาเตือนความจำ",
+        "name": "set_timer", "description": "ตั้งเวลาเตือนความจำแบบนับถอยหลัง (อีก N นาที)",
         "parameters": {"type": "object", "properties": {
             "minutes": {"type": "number", "description": "จำนวนนาทีก่อนเตือน"},
             "message": {"type": "string", "description": "ข้อความที่จะเตือน"}}, "required": ["minutes"]}}},
+    {"type": "function", "function": {
+        "name": "set_alarm", "description": "ตั้งเวลาเตือนความจำตามเวลานาฬิกาที่ระบุ (ไม่ใช่นับถอยหลัง) เช่น 'บอกตอน 3 ทุ่ม' หรือ 'พรุ่งนี้ 7 โมงเช้า'",
+        "parameters": {"type": "object", "properties": {
+            "time": {"type": "string", "description": "เวลาที่จะเตือน รูปแบบ HH:MM 24 ชั่วโมงเสมอ (เช่น 21:00 สำหรับ 3 ทุ่ม, 07:00 สำหรับ 7 โมงเช้า) แปลงจากที่นายพูดให้เป็นรูปแบบนี้ก่อนเรียก"},
+            "message": {"type": "string", "description": "ข้อความที่จะเตือน"}}, "required": ["time"]}}},
+    {"type": "function", "function": {
+        "name": "list_timers", "description": "แสดงรายการเวลาเตือนความจำ (timer/alarm) ที่ตั้งไว้ทั้งหมดตอนนี้",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "cancel_timer", "description": "ยกเลิกเวลาเตือนความจำที่ตั้งไว้",
+        "parameters": {"type": "object", "properties": {
+            "which": {"type": "string", "description": "ลำดับที่จาก list_timers (เช่น '1') หรือคำในข้อความเตือน หรือเว้นว่างเพื่อยกเลิกทั้งหมด"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "empty_recycle_bin", "description": "ล้างถังรีไซเคิล (ต้องยืนยันจากนายก่อนเสมอ)",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
@@ -813,13 +931,15 @@ TOOL_SCHEMAS = [
 _TOOL_ARG_KEY = {
     "open_app": "name", "close_app": "name", "set_volume": "direction",
     "open_web": "query", "search_web": "query", "remember": "text",
-    "clipboard_write": "text", "media_control": "action",
+    "clipboard_write": "text", "media_control": "action", "cancel_timer": "which",
 }
 
 def _pack_args(name, args):
     args = args or {}
     if name == "set_timer":
         return f"{args.get('minutes', '')}|{args.get('message', 'ครบเวลาที่ตั้งไว้แล้วค่ะ')}"
+    if name == "set_alarm":
+        return f"{args.get('time', '')}|{args.get('message', 'ถึงเวลาที่ตั้งไว้แล้วค่ะ')}"
     if name == "dispatch_to_hermes":
         return f"{args.get('title', 'Friday task')}|{args.get('message', '')}"
     key = _TOOL_ARG_KEY.get(name)
@@ -919,6 +1039,16 @@ CONFIRM_GATED = {
         "question": lambda args: f"ต้องการตั้งเวลาตามนี้นะคะ: {args} ยืนยันไหมคะ",
         "cancel": lambda _args: "ยกเลิกการตั้งเวลาแล้วค่ะ",
         "execute": tool_set_timer,
+    },
+    "set_alarm": {
+        "question": lambda args: f"ต้องการตั้งเวลาตามนี้นะคะ: {args} ยืนยันไหมคะ",
+        "cancel": lambda _args: "ยกเลิกการตั้งเวลาแล้วค่ะ",
+        "execute": tool_set_alarm,
+    },
+    "cancel_timer": {
+        "question": lambda args: f"ต้องการยกเลิกเวลาที่ตั้งไว้{(chr(32) + args) if args else 'ทั้งหมด'}นะคะ ยืนยันไหมคะ",
+        "cancel": lambda _args: "ไม่ยกเลิกให้ค่ะ",
+        "execute": tool_cancel_timer,
     },
     "search_web": {
         "question": lambda args: f"ต้องการค้นหา '{args}' นะคะ ยืนยันไหมคะ",

@@ -162,6 +162,64 @@ def check_set_timer_returns_immediately():
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def check_set_alarm_invalid():
+    out = fw.tool_set_alarm("25:99|invalid")
+    if "ไม่ได้" not in out:
+        raise AssertionError(f"expected rejection for invalid HH:MM, got: {out}")
+    return out
+
+
+def check_set_alarm_schedules_next_day_if_passed():
+    """A clock time already passed today must roll to tomorrow, not fire immediately/late."""
+    orig_schedule = fw._schedule_reminder_task
+    fw._schedule_reminder_task = lambda minutes, message: None
+    try:
+        past = (fw.datetime.now() - fw.timedelta(minutes=5)).strftime("%H:%M")
+        before = fw.datetime.now()
+        fw.tool_set_alarm(f"{past}|past time test")
+        with fw._timers_lock:
+            entry = fw._active_timers[-1]
+            fire_at = entry["fire_at"]
+            entry["cancel_event"].set()  # cleanup: don't let the background thread actually fire
+    finally:
+        fw._schedule_reminder_task = orig_schedule
+    if fire_at <= before:
+        raise AssertionError(f"expected the alarm to roll to tomorrow, got fire_at={fire_at} (now was {before})")
+    return f"rolled to next day: fire_at={fire_at}"
+
+
+def check_list_and_cancel_timers():
+    """set_timer x2 -> list_timers shows both -> cancel_timer('1') removes one -> cancel_timer('')
+    clears the rest -> list_timers reports empty. Stubs the Task Scheduler backup so this stays
+    a fast unit test; the real backup is covered by check_schedule_reminder_task_live."""
+    orig_schedule = fw._schedule_reminder_task
+    orig_cancel = fw._cancel_reminder_task
+    fw._schedule_reminder_task = lambda minutes, message: None
+    fw._cancel_reminder_task = lambda task_name: None
+    try:
+        fw.tool_set_timer("60|timer A")
+        fw.tool_set_timer("60|timer B")
+        listed = fw.tool_list_timers()
+        if "timer A" not in listed or "timer B" not in listed:
+            raise AssertionError(f"expected both timers listed, got: {listed}")
+
+        cancel_out = fw.tool_cancel_timer("1")
+        if "ยกเลิก" not in cancel_out:
+            raise AssertionError(f"expected a cancellation confirmation, got: {cancel_out}")
+        listed_after = fw.tool_list_timers()
+        if "timer A" in listed_after and "timer B" in listed_after:
+            raise AssertionError(f"expected only one timer left after cancelling '1', got: {listed_after}")
+
+        fw.tool_cancel_timer("")  # cancel the rest
+        empty = fw.tool_list_timers()
+        if empty != "ตอนนี้ไม่มีเวลาที่ตั้งไว้เลยค่ะ":
+            raise AssertionError(f"expected empty list after cancelling all, got: {empty}")
+    finally:
+        fw._schedule_reminder_task = orig_schedule
+        fw._cancel_reminder_task = orig_cancel
+    return "list -> cancel one -> cancel rest -> empty: ok"
+
+
 def check_schedule_reminder_task_live():
     """Live test of the real Windows Scheduled Task backup (see _schedule_reminder_task in
     friday_walkie_talkie.py) — confirms it actually registers with the OS and
@@ -254,7 +312,7 @@ def check_all_gated_tools_individually_scannable():
 def check_ungated_tier0_tools():
     """Tier 0 (pure read-only, no real-world effect) must stay ungated — confirming get_time
     every time would be needless friction with no safety benefit."""
-    tier0 = {"get_time", "disk_space", "system_status", "network_status", "list_processes"}
+    tier0 = {"get_time", "disk_space", "system_status", "network_status", "list_processes", "list_timers"}
     gated_overlap = tier0 & set(fw.CONFIRM_GATED)
     if gated_overlap:
         raise AssertionError(f"Tier-0 read-only tools should not be gated: {gated_overlap}")
@@ -835,6 +893,9 @@ def check_dispatch_to_hermes_missing_message_rejected():
 check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
 check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
 check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
+check("set_alarm(invalid)", check_set_alarm_invalid)
+check("set_alarm(rolls to next day)", check_set_alarm_schedules_next_day_if_passed)
+check("list_and_cancel_timers", check_list_and_cancel_timers)
 check("tool_schemas_match_tools", check_tool_schemas_match_tools)
 check("pack_args", check_pack_args)
 check("run_native_tools", check_run_native_tools)
