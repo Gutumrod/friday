@@ -397,6 +397,90 @@ def check_search_web_strips_injection_tags():
     return out
 
 
+def check_is_confirm():
+    """Live bug 2026-07-03 (session-04): 'โอเคยืนยัน' (compound of two known confirm words)
+    didn't exact-match CONFIRM_WORDS, cancelling a pending search confirm; the model then
+    answered from its own knowledge instead of the real search. Covers the fix plus every
+    pre-existing exact-match/particle/negation case so the substring-containment rewrite
+    doesn't regress them (especially 'ไม่ใช่', which contains 'ใช่' as a substring)."""
+    cases = [
+        ("ยืนยันครับ", True), ("ยืนยันค่ะ", True), ("เปิดเลยครับ", True),
+        ("ใช่ค่ะ", True), ("ตกลงนะคะ", True), ("เค", True),
+        ("ไม่เปิดแล้วครับ", False), ("เครื่องคอมค้าง", False), ("ไม่ใช่ครับ", False),
+        ("โอเคยืนยัน", True), ("โอเคยืนยันครับ", True),
+    ]
+    for text, expect in cases:
+        got = fw._is_confirm(text)
+        if got != expect:
+            raise AssertionError(f"{text!r}: expected confirm={expect}, got {got}")
+    return f"{len(cases)} cases correct, including the live 'โอเคยืนยัน' bug"
+
+
+def check_tv_verify_silent_on_success():
+    """New verification after tool_tv_power('on') (live bug 2026-07-03: claimed 'เปิดทีวีให้
+    แล้วค่ะ' twice while the TV never turned on). Success stays silent -- CEO already sees the
+    TV, no need to narrate it."""
+    spoken = []
+    orig_speak, orig_connect, orig_wait = fw.speak, fw._tv_connect, fw.TV_BOOT_WAIT
+    fw.speak = lambda text, *a, **kw: spoken.append(text)
+    fw._tv_connect = lambda: object()
+    fw.TV_BOOT_WAIT = 0.01
+    try:
+        fw._verify_tv_on()
+    finally:
+        fw.speak, fw._tv_connect, fw.TV_BOOT_WAIT = orig_speak, orig_connect, orig_wait
+    if spoken:
+        raise AssertionError(f"expected silence on successful reconnect, got: {spoken}")
+    return "silent on success"
+
+
+def check_tv_verify_speaks_on_failure():
+    spoken = []
+    orig_speak, orig_connect, orig_wait = fw.speak, fw._tv_connect, fw.TV_BOOT_WAIT
+
+    def fail():
+        raise ConnectionError("unreachable")
+
+    fw.speak = lambda text, *a, **kw: spoken.append(text)
+    fw._tv_connect = fail
+    fw.TV_BOOT_WAIT = 0.01
+    try:
+        fw._verify_tv_on()
+    finally:
+        fw.speak, fw._tv_connect, fw.TV_BOOT_WAIT = orig_speak, orig_connect, orig_wait
+    if not spoken or "ต่อไม่ติด" not in spoken[0]:
+        raise AssertionError(f"expected a not-connected warning, got: {spoken}")
+    return spoken[0]
+
+
+def check_search_summary_female_ending_live():
+    """Live bug 2026-07-03: one search-summary reply ended in 'ครับ' (male) even though Friday
+    is a female persona -- the narrow system_stub used only for this summarization pass had no
+    gender instruction, unlike the main system prompt. Live model call (not mocked) since this
+    is a model-output property; runs 3x since it's not fully deterministic."""
+    class FakeDDGS:
+        def __init__(self, *a, **kw):
+            pass
+
+        def text(self, query, **kwargs):
+            return [{"title": "กรมอุตุนิยมวิทยา",
+                     "body": "วันนี้กรุงเทพฯ อากาศแจ่มใส อุณหภูมิสูงสุด 34 องศา ไม่มีฝน"}]
+
+    orig = fw.DDGS
+    fw.DDGS = FakeDDGS
+    try:
+        bad = []
+        for _ in range(3):
+            content = fw._execute_search_web("อากาศวันนี้ที่กรุงเทพ")
+            if "ครับ" in content:
+                bad.append(content)
+    finally:
+        fw.DDGS = orig
+    if bad:
+        raise AssertionError(f"male ending leaked through {len(bad)}/3 times: {bad}")
+    return "no male ending in 3/3 live replies"
+
+
 def check_search_web_injection_live():
     """Live end-to-end regression for the same attack, now through the actual production
     function (_execute_search_web(), the CONFIRM_GATED execute for search_web since 2026-07-02):
@@ -1038,6 +1122,8 @@ def check_tv_power_volume_launch_roundtrip():
     real TV needed) — confirms arg wiring and spoken confirmations."""
     orig_system, orig_media, orig_app = fw.SystemControl, fw.MediaControl, fw.ApplicationControl
     orig_connect, orig_socket_class = fw._tv_connect, fw.socket.socket
+    orig_wait = fw.TV_BOOT_WAIT
+    fw.TV_BOOT_WAIT = 0.01  # the "on" branch spawns a background verify thread now; keep it fast
     wol_sent = []
 
     class FakeSystemControl:
@@ -1109,6 +1195,7 @@ def check_tv_power_volume_launch_roundtrip():
         fw.SystemControl, fw.MediaControl, fw.ApplicationControl = orig_system, orig_media, orig_app
         fw._tv_connect = orig_connect
         fw.socket.socket = orig_socket_class
+        fw.TV_BOOT_WAIT = orig_wait
     return "tv_power(on/off/invalid) + tv_volume(up/mute) + tv_launch_app(found/missing) ok"
 
 
@@ -1187,6 +1274,10 @@ check("native_tool_calling(live)", check_native_tool_calling_live)
 check("ask_ollama(slow_warning)", check_ask_ollama_slow_warning)
 check("confirm_words_added", check_confirm_words_added)
 check("confirm_particle_stripping", check_confirm_particle_stripping)
+check("is_confirm", check_is_confirm)
+check("tv_verify_silent_on_success", check_tv_verify_silent_on_success)
+check("tv_verify_speaks_on_failure", check_tv_verify_speaks_on_failure)
+check("search_summary_female_ending_live", check_search_summary_female_ending_live)
 check("audio_serialization(speak+speak)", check_audio_serialization)
 check("fallback_tts_substitutions", check_fallback_tts_substitutions)
 check("transliterate_loanwords_fails_open", check_transliterate_loanwords_fails_open)
