@@ -4,3 +4,5 @@ src/tts_cache/
 voices/
 vault/
 backups/
+.env
+*.env
