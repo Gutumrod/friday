@@ -757,6 +757,36 @@ def check_gated_tag_scan_finds_non_first_gate():
     return "gated call found regardless of position in a multi-call reply"
 
 
+def check_should_announce_cancel():
+    """Regression for the live double-message bug found 2026-07-03: a spoken confirmation
+    that didn't exactly match CONFIRM_WORDS (e.g. repeating 'เปิด YouTube เลยค่ะ' instead of a
+    bare 'ใช่') cancelled the pending gate, then fell through and got reprocessed as a fresh
+    command — which, when the model re-requested the SAME gated tool+args, made Friday say
+    'ยกเลิกการเปิดแอป YouTube แล้วค่ะ' immediately followed by 'ต้องการเปิดแอป YouTube ในทีวีนะคะ
+    ยืนยันไหมคะ' in one turn. Observed 3x live with tv_launch_app and search_web."""
+    same = fw._should_announce_cancel(("tv_launch_app", "YouTube"), ("tv_launch_app", "YouTube"))
+    if same:
+        raise AssertionError("cancel must be suppressed when the fresh command re-requests the identical gated call")
+
+    different_args = fw._should_announce_cancel(("open_app", "notepad"), ("open_app", "chrome"))
+    if not different_args:
+        raise AssertionError("cancel must still announce when the fresh gated call has different args")
+
+    different_tool = fw._should_announce_cancel(("search_web", "อากาศ"), ("tv_power", "on"))
+    if not different_tool:
+        raise AssertionError("cancel must still announce when the fresh gated call is a different tool")
+
+    no_new_gate = fw._should_announce_cancel(("close_app", "chrome"), None)
+    if not no_new_gate:
+        raise AssertionError("cancel must still announce when the fresh command isn't gated at all")
+
+    no_cancel_pending = fw._should_announce_cancel(None, ("open_app", "chrome"))
+    if no_cancel_pending:
+        raise AssertionError("must not announce a cancel when nothing was cancelled this turn")
+
+    return "cancel suppressed only on identical re-ask, announced in every other case"
+
+
 def check_tool_schemas_match_tools():
     """TOOL_SCHEMAS and TOOLS are two independently maintained structures (schema for the
     model, function for execution) — this catches drift if a tool is added/removed from one
@@ -1144,6 +1174,7 @@ def check_tv_play_video_and_remote_button():
 
 
 check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
+check("should_announce_cancel", check_should_announce_cancel)
 check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
 check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
 check("set_alarm(invalid)", check_set_alarm_invalid)

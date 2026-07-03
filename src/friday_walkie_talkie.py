@@ -1377,6 +1377,16 @@ def find_first_gated_tool_call(tool_calls):
             return name, _pack_args(name, tc["function"].get("arguments"))
     return None
 
+def _should_announce_cancel(cancelled_gate, new_gated):
+    """Regression for a live bug found 2026-07-03: a spoken confirmation that doesn't exactly
+    match CONFIRM_WORDS (e.g. 'เปิด YouTube เลยค่ะ' repeating the command instead of a bare
+    'ใช่') cancels the pending gate, then falls through and gets processed as a fresh command —
+    which, if the model re-requests the SAME gated tool+args, immediately re-asks the identical
+    confirm question. Friday would say 'ยกเลิกการเปิดแอป YouTube แล้วค่ะ' immediately followed by
+    'ต้องการเปิดแอป YouTube ในทีวีนะคะ ยืนยันไหมคะ' in one turn, sounding like a broken loop.
+    Suppress the cancel announcement in exactly that case — the re-ask below already covers it."""
+    return cancelled_gate is not None and cancelled_gate != new_gated
+
 def run_native_tools(tool_calls):
     """Execute every requested (non-gated) tool call, joining their results into one reply."""
     outputs = []
@@ -1471,6 +1481,8 @@ def main():
             break
 
         # Resolve a pending confirm-gated tool call before treating this as a new command
+        cancelled_gate = None  # (tool_name, args) cancelled this turn, or None — see
+        # _should_announce_cancel for why the cancel message itself is deferred
         if pending_confirm:
             tool_name, args = pending_confirm
             pending_confirm = None
@@ -1484,9 +1496,7 @@ def main():
                 speak(result)
                 continue
             else:
-                cancel_msg = gate["cancel"](args)
-                speak(cancel_msg)
-                log_to_vault("assistant", cancel_msg)
+                cancelled_gate = (tool_name, args)
                 # fall through — this utterance still gets processed as a fresh command below
 
         history.append({"role": "user", "content": user_input})
@@ -1497,6 +1507,12 @@ def main():
         tool_calls = message["tool_calls"]
 
         gated = find_first_gated_tool_call(tool_calls)
+
+        if _should_announce_cancel(cancelled_gate, gated):
+            cancel_msg = CONFIRM_GATED[cancelled_gate[0]]["cancel"](cancelled_gate[1])
+            speak(cancel_msg)
+            log_to_vault("assistant", cancel_msg)
+
         if gated:
             # Every tool with a real-world effect is confirm-gated now (see CONFIRM_GATED
             # comment above) — hold off on EVERYTHING this turn (including any other call)
