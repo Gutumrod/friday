@@ -31,6 +31,7 @@ VOICE_NAME = "th-TH-PremwadeeNeural"  # Microsoft Premwadee (Thai Female - Frida
 JARVIS_VOICE = "th-TH-NiwatNeural"  # Microsoft Niwat (Thai Male) — used only for the cloud-slow warning below, speak(voice=...)
 SLOW_WARNING_MESSAGE = "ผมจาวิส รายงานครับ ไฟรเดย์กำลังเจอปัญหา รอสักครู่ครับนาย"
 DEVICE_INDEX = None  # ใส่เลข Index ของไมค์ที่ใช้จริง (เช่น 4 สำหรับ HyperX, 1 สำหรับ Razer X) ถ้าเว้น None จะใช้ไมค์หลักของ Windows
+CAMERA_INDEX = 0  # index ของกล้องเว็บแคมที่ใช้จริง (เครื่องนี้มีกล้องเดียว = Razer Kiyo = 0) เครื่องอื่นที่มีหลายตัวอาจไม่ใช่ 0 เช็คด้วย Get-PnpDevice -Class Camera ก่อนเปลี่ยน
 
 # dispatch_to_hermes — see docs/../shared/decisions/dispatch-to-hermes-contract-2026-07-02.md
 MAILBOX_DIR = r"D:\AI-Workspace\mailbox"
@@ -836,7 +837,7 @@ def tool_open_camera(_args=""):
     with _camera_lock:
         if _camera is not None and _camera.isOpened():
             return "กล้องเปิดอยู่แล้วค่ะ"
-        cam = cv2.VideoCapture(0)
+        cam = cv2.VideoCapture(CAMERA_INDEX)
         if not cam.isOpened():
             cam.release()
             return "เปิดกล้องไม่ได้ค่ะ ไม่เจอเว็บแคมที่เครื่องนี้"
