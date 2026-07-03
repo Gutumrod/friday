@@ -631,53 +631,17 @@ def check_audio_serialization():
     return "serialized ok (no overlap)"
 
 
-def check_fallback_tts_substitutions():
-    """VachanaTTS (the fallback engine) mispronounces 'ฟรายเดย์' — verified live 2026-07-02
-    listening to actual generated audio with CEO, fixed by respelling 'ไฟรเดย์' for this
-    engine only (edge-tts, the primary engine, pronounces the normal spelling fine)."""
-    if fw._FALLBACK_TTS_SUBSTITUTIONS.get("ฟรายเดย์") != "ไฟรเดย์":
-        raise AssertionError(f"expected the Friday respelling fix, got: {fw._FALLBACK_TTS_SUBSTITUTIONS}")
-    return f"{len(fw._FALLBACK_TTS_SUBSTITUTIONS)} substitution(s) registered"
-
-
-def check_transliterate_loanwords_fails_open():
-    """_transliterate_loanwords() must never be the reason Friday goes silent on the fallback
-    path: pure-Thai text (no English letters) should skip the LLM round trip entirely, and a
-    network failure on English-containing text must fail open to the original text."""
-    calls = []
-    orig_post = fw.requests.post
-
-    def fake_post(*args, **kwargs):
-        calls.append(1)
-        raise ConnectionError("simulated network failure")
-
-    fw.requests.post = fake_post
-    try:
-        result_thai = fw._transliterate_loanwords("สวัสดีค่ะ")
-        calls_after_thai = len(calls)
-        result_fail = fw._transliterate_loanwords("เปิด notepad ให้แล้วค่ะ")
-    finally:
-        fw.requests.post = orig_post
-
-    if calls_after_thai != 0:
-        raise AssertionError("pure-Thai text should skip the LLM call entirely")
-    if result_thai != "สวัสดีค่ะ":
-        raise AssertionError(f"pure-Thai text should be returned unchanged, got: {result_thai!r}")
-    if result_fail != "เปิด notepad ให้แล้วค่ะ":
-        raise AssertionError(f"a failed transliteration call should fail open to the original text, got: {result_fail!r}")
-    if len(calls) != 1:
-        raise AssertionError(f"expected exactly 1 network attempt for the English-containing text, got {len(calls)}")
-    return "pure-Thai skips the call; network failure fails open to original text"
-
-
 def check_generate_speech_fallback_live():
-    """B3 (audit, 2026-07-02) — live test of the actual local TTS fallback (PyThaiTTS/
-    VachanaTTS), not a mock: confirms it produces real playable audio without any network
-    call, closing 'Friday goes mute if edge-tts is unreachable'."""
+    """2026-07-04 — live test of the actual local TTS fallback (JaiTTS, F5-TTS-based), not a
+    mock: confirms it produces real playable audio without any network call to edge-tts,
+    closing 'Friday goes mute if edge-tts is unreachable'. Replaces the old VachanaTTS live
+    test (same purpose, new engine) -- no more loanword transliteration test since JaiTTS
+    handles Thai-English code-switching natively, the whole reason that step existed for
+    VachanaTTS is gone. Genuinely hits the GPU/HF download path, not mocked."""
     if os.path.exists(fw.TEMP_AUDIO_FILE_FALLBACK):
         os.remove(fw.TEMP_AUDIO_FILE_FALLBACK)
     try:
-        ok = fw.generate_speech_fallback("สวัสดีค่ะนาย ฟรายเดย์พร้อมรับคำสั่งแล้วค่ะ")
+        ok = fw.generate_speech_fallback("เปิด Chrome ให้หน่อยค่ะนาย แล้วก็เช็ค YouTube ด้วยนะคะ")
         if not ok:
             raise AssertionError("generate_speech_fallback() returned False")
         if not os.path.exists(fw.TEMP_AUDIO_FILE_FALLBACK):
@@ -688,7 +652,7 @@ def check_generate_speech_fallback_live():
     finally:
         if os.path.exists(fw.TEMP_AUDIO_FILE_FALLBACK):
             os.remove(fw.TEMP_AUDIO_FILE_FALLBACK)
-    return f"generated {size} bytes of real offline audio"
+    return f"generated {size} bytes of real offline audio (code-switched Thai-English)"
 
 
 def check_speak_uses_fallback_when_edge_tts_fails():
@@ -1335,9 +1299,7 @@ check("tv_verify_silent_on_success", check_tv_verify_silent_on_success)
 check("tv_verify_speaks_on_failure", check_tv_verify_speaks_on_failure)
 check("search_summary_female_ending_live", check_search_summary_female_ending_live)
 check("audio_serialization(speak+speak)", check_audio_serialization)
-check("fallback_tts_substitutions", check_fallback_tts_substitutions)
-check("transliterate_loanwords_fails_open", check_transliterate_loanwords_fails_open)
-check("generate_speech_fallback(live)", check_generate_speech_fallback_live)
+check("generate_speech_fallback(live, JaiTTS)", check_generate_speech_fallback_live)
 check("speak_uses_fallback_when_edge_tts_fails", check_speak_uses_fallback_when_edge_tts_fails)
 check("tts_cache_hit_skips_regeneration", check_tts_cache_hit_skips_regeneration)
 check("mic_listening_default", check_mic_listening_default_clear)

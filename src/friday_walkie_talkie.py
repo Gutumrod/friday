@@ -59,6 +59,18 @@ MAILBOX_INBOX_HERMES_DIR = os.path.join(MAILBOX_DIR, "inbox", "hermes")
 TTS_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tts_cache")
 TESTING_LOCAL_VOICE_ONLY = False  # ponytail: temporary (2026-07-02) — set True to force local fallback voice for testing
 
+# Offline fallback TTS -- JaiTTS (F5-TTS-based, native Thai-English code-switching), replaces
+# VachanaTTS 2026-07-04 after a live A/B: same-quality-or-better on code-switched sentences and
+# genuinely natural-sounding, vs VachanaTTS being rated "เหมือนชาวเขาลงมา" earlier. Voice cloned
+# from a fixed reference clip so the fallback has a stable, consistent identity across restarts.
+JAITTS_REPO = "JTS-AI/JaiTTS-F5TTS"
+VOICES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "voices")
+JAITTS_REF_AUDIO = os.path.join(VOICES_DIR, "jaitts_reference.wav")
+JAITTS_REF_TEXT = (
+    "สวัสดีค่ะนาย Friday พร้อมรับคำสั่งแล้วค่ะ ตอนนี้กำลังทดสอบระบบ voice cloning อยู่ค่ะ "
+    "มีอะไรให้ Friday รับใช้ นายบอกได้เลยนะคะ Friday พร้อมทำงานแล้วค่ะ"
+)
+
 # Memory vault (Obsidian-compatible folder, resolved from script location so cwd doesn't matter)
 VAULT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "vault")
 FACTS_PATH = os.path.join(VAULT_DIR, "facts.md")
@@ -99,66 +111,32 @@ async def generate_speech(text, voice=None):
         await asyncio.sleep(1)
     return False
 
-_fallback_tts_engine = None
-
-# ponytail: VachanaTTS (via PyThaiTTS) mispronounces some English loanwords spelled the normal
-# Thai way — verified live 2026-07-02, "ฟรายเดย์" (Friday) came out garbled with th_f_1, fixed
-# by respelling "ไฟรเดย์" for this engine only. edge-tts (primary) pronounces the normal
-# spelling fine, so this substitution only applies on the fallback path. Add more entries here
-# if another word turns out unclear on this engine.
-_FALLBACK_TTS_SUBSTITUTIONS = {
-    "ฟรายเดย์": "ไฟรเดย์",
-}
-
-def _transliterate_loanwords(text):
-    """Ask the cloud LLM to respell embedded English words (app names, tech terms) into Thai
-    phonetic script before VachanaTTS sees them — it mispronounces raw Latin script badly
-    (verified 2026-07-02: "notepad" came out unintelligible) and a fixed substitution dict
-    doesn't scale to unlimited app/product names. Fallback-path only (edge-tts handles English
-    loanwords fine as-is). Single attempt, short timeout, fails open to the original text —
-    this must never be the reason Friday goes silent on an already-degraded path. Deliberately
-    NOT reusing ask_ollama(): that function can itself call speak() on a slow response, and
-    we're invoked from inside speak()'s AUDIO_LOCK — reusing it would risk a self-deadlock."""
-    if not re.search(r'[A-Za-z]', text):
-        return text
-    try:
-        payload = {
-            "model": MODEL_NAME,
-            "stream": False,
-            "messages": [{"role": "user", "content": (
-                "แปลงคำภาษาอังกฤษที่ปนอยู่ในประโยคนี้ให้เป็นคำสะกดไทยที่อ่านออกเสียงถูกต้อง "
-                "(เช่น Notepad -> โน้ตแพด, Chrome -> โครม) ห้ามแปลความหมาย ห้ามเพิ่ม/ตัดคำอื่น "
-                "ตอบกลับด้วยประโยคที่แก้แล้วเท่านั้น ไม่ต้องอธิบาย:\n\n" + text
-            )}],
-        }
-        response = requests.post(OLLAMA_URL, json=payload, timeout=8)
-        if response.status_code == 200:
-            result = response.json()["message"].get("content", "").strip()
-            if result:
-                return result
-    except Exception as e:
-        print(f"⚠️ Loanword transliteration failed, using original text: {e}")
-    return text
+_jaitts_engine = None
 
 def generate_speech_fallback(text):
-    """Local, fully-offline TTS (PyThaiTTS/VachanaTTS, th_f_1) used only when edge-tts (cloud)
-    fails all 3 attempts — closes B3 (audit, 2026-07-02): before this, Friday just went silent
-    with no fallback at all. Lower voice quality than edge-tts's neural voice, but it's a real
-    working Thai voice, unlike Windows' built-in SAPI voices (checked: English-only on this
-    machine, no Thai). Model loads lazily on first use so the common case (edge-tts works)
-    never pays this cost."""
-    global _fallback_tts_engine
-    text = _transliterate_loanwords(text)
-    for wrong, right in _FALLBACK_TTS_SUBSTITUTIONS.items():
-        text = text.replace(wrong, right)
+    """Local, fully-offline TTS used only when edge-tts (cloud) fails all 3 attempts — closes
+    B3 (audit, 2026-07-02): before this, Friday just went silent with no fallback at all.
+    2026-07-04: swapped from VachanaTTS to JaiTTS (F5-TTS-based, natively handles Thai-English
+    code-switching) after a live A/B where VachanaTTS was rated "เหมือนชาวเขาลงมา" and JaiTTS
+    came back "เสียงโคตรดีเลย" on the exact same kind of code-switched sentence Friday actually
+    says (app names, tech terms). No loanword transliteration needed anymore -- that whole step
+    existed only to work around VachanaTTS's poor raw-English handling. Runs on GPU if available
+    (this machine has one, confirmed native Windows CUDA -- no WSL), falls back to CPU
+    otherwise. Model loads lazily on first use so the common case (edge-tts works) never pays
+    this cost."""
+    global _jaitts_engine
     try:
-        if _fallback_tts_engine is None:
-            from pythaitts import TTS
-            _fallback_tts_engine = TTS(pretrained="vachana", device="cpu")
-            _fallback_tts_engine.load_pretrained(version="1.0")
-        _fallback_tts_engine.tts(
-            text=text, speaker_idx="th_f_1", language_idx="th-th",
-            return_type="file", filename=TEMP_AUDIO_FILE_FALLBACK,
+        if _jaitts_engine is None:
+            import torch
+            from huggingface_hub import hf_hub_download
+            from f5_tts.api import F5TTS
+            ckpt = hf_hub_download(repo_id=JAITTS_REPO, filename="model.pt")
+            vocab = hf_hub_download(repo_id=JAITTS_REPO, filename="vocab.txt")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            _jaitts_engine = F5TTS(model="F5TTS_v1_Base", ckpt_file=ckpt, vocab_file=vocab, device=device)
+        _jaitts_engine.infer(
+            ref_file=JAITTS_REF_AUDIO, ref_text=JAITTS_REF_TEXT, gen_text=text,
+            file_wave=TEMP_AUDIO_FILE_FALLBACK,
         )
         return os.path.exists(TEMP_AUDIO_FILE_FALLBACK) and os.path.getsize(TEMP_AUDIO_FILE_FALLBACK) > 0
     except Exception as e:
