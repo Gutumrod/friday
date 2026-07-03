@@ -1012,6 +1012,59 @@ def check_dispatch_to_hermes_missing_message_rejected():
     return out
 
 
+def check_notify_hermes_missing_message_rejected():
+    out = fw.tool_notify_hermes("")
+    if "ข้อความ" not in out:
+        raise AssertionError(f"expected a request for a message, got: {out}")
+    return out
+
+
+def check_notify_hermes_gate_wiring():
+    gate = fw.CONFIRM_GATED.get("notify_hermes")
+    if not gate or gate["execute"] is not fw.tool_notify_hermes:
+        raise AssertionError("notify_hermes missing from CONFIRM_GATED or wired to the wrong function")
+    if "notify_hermes" not in fw.TOOLS:
+        raise AssertionError("notify_hermes missing from TOOLS")
+    q, c = gate["question"]("ทดสอบ"), gate["cancel"]("ทดสอบ")
+    if not q or not c:
+        raise AssertionError("notify_hermes question/cancel text must not be empty")
+    return f"wired ok — question={q!r} cancel={c!r}"
+
+
+def check_notify_hermes_writes_file():
+    """New tool for the n8n 'FRIDAY Mailbox Notifier' pipeline (2026-07-03, see
+    docs/N8N_MAILBOX_NOTIFIER_2026-07-03.md) — fire-and-forget, just drops a file into
+    mailbox/inbox/hermes/ instead of blocking like tool_dispatch_to_hermes. n8n's inbox_poll.js
+    only surfaces the FILENAME in its Telegram message (not file content), so the message must
+    land in the filename itself."""
+    tmp_dir = tempfile.mkdtemp()
+    orig_dir = fw.MAILBOX_INBOX_HERMES_DIR
+    fw.MAILBOX_INBOX_HERMES_DIR = os.path.join(tmp_dir, "inbox", "hermes")
+    try:
+        out = fw.tool_notify_hermes("ทดสอบแจ้งเตือน/พิเศษ*ห้าม:มี_และ_ขีดล่าง")
+        if "แจ้งเตือน" not in out:
+            raise AssertionError(f"expected a confirmation reply, got: {out}")
+        files = os.listdir(fw.MAILBOX_INBOX_HERMES_DIR)
+        if len(files) != 1:
+            raise AssertionError(f"expected exactly 1 file written, got: {files}")
+        filename = files[0]
+        # live bug 2026-07-03: n8n's Telegram node uses Markdown parse_mode and silently
+        # swallows "_"/"*"/"`"/"[" as formatting syntax -- confirmed by real Telegram
+        # notifications losing every underscore. "-" survives since it isn't special.
+        message_part = filename.split("-", 3)[-1]
+        for bad_char in '\\/:*?"<>|_`[]':
+            if bad_char in message_part:
+                raise AssertionError(f"filename still has a char Telegram Markdown would eat {bad_char!r}: {filename}")
+        with open(os.path.join(fw.MAILBOX_INBOX_HERMES_DIR, filename), "r", encoding="utf-8") as f:
+            content = f.read()
+        if content != "ทดสอบแจ้งเตือน/พิเศษ*ห้าม:มี_และ_ขีดล่าง":
+            raise AssertionError(f"file content should be the original message verbatim, got: {content!r}")
+    finally:
+        fw.MAILBOX_INBOX_HERMES_DIR = orig_dir
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+    return f"wrote {filename!r} with sanitized name, verbatim content"
+
+
 def check_camera_gate_wiring():
     """open_camera is the one privacy-sensitive checkpoint (2026-07-03 decision) —
     look_camera/close_camera stay ungated so asking 'what do you see' repeatedly after the
@@ -1264,6 +1317,9 @@ check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
 check("should_announce_cancel", check_should_announce_cancel)
 check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
 check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
+check("notify_hermes(gate wiring)", check_notify_hermes_gate_wiring)
+check("notify_hermes(missing message rejected)", check_notify_hermes_missing_message_rejected)
+check("notify_hermes(writes file)", check_notify_hermes_writes_file)
 check("set_alarm(invalid)", check_set_alarm_invalid)
 check("set_alarm(rolls to next day)", check_set_alarm_schedules_next_day_if_passed)
 check("list_and_cancel_timers", check_list_and_cancel_timers)
