@@ -1023,7 +1023,12 @@ def check_tv_power_volume_launch_roundtrip():
     class FakeApplicationControl:
         def __init__(self, client): pass
         def list_apps(self):
-            return [{"id": "youtube.leanback.v4", "title": "YouTube"}, {"id": "netflix.id", "title": "Netflix"}]
+            # Kids listed FIRST on purpose — matches the real TV's order that caused the live
+            # 2026-07-03 bug: "youtube" substring-matched "YouTube Kids" every time because it
+            # came first, never reaching the plain "YouTube" entry.
+            return [{"id": "youtube.leanback.kids.v4", "title": "YouTube Kids"},
+                    {"id": "youtube.leanback.v4", "title": "YouTube"},
+                    {"id": "netflix.id", "title": "Netflix"}]
         def launch(self, app, content_id=None, params=None):
             return {"id": app["id"]}
 
@@ -1060,8 +1065,12 @@ def check_tv_power_volume_launch_roundtrip():
             raise AssertionError(f"expected mute confirmation, got: {mute_result}")
 
         app_result = fw.tool_tv_launch_app("youtube")
-        if "YouTube" not in app_result:
-            raise AssertionError(f"expected YouTube launch confirmation, got: {app_result}")
+        if "เปิด YouTube ให้แล้วค่ะ" != app_result:
+            raise AssertionError(f"expected plain YouTube (not Kids) launch confirmation, got: {app_result}")
+
+        kids_result = fw.tool_tv_launch_app("youtube kids")
+        if "Kids" not in kids_result:
+            raise AssertionError(f"expected YouTube Kids launch confirmation, got: {kids_result}")
 
         missing_app_result = fw.tool_tv_launch_app("ไม่มีแอปนี้")
         if "ไม่เจอ" not in missing_app_result:

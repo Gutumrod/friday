@@ -963,8 +963,12 @@ def tool_tv_volume(args):
     return "ปิดเสียงทีวีให้แล้วค่ะ"
 
 def tool_tv_launch_app(args):
-    """Launches an app on the TV by case-insensitive substring match against the TV's own
-    installed app list (e.g. 'youtube', 'netflix') — no hardcoded app-id map to keep in sync."""
+    """Launches an app on the TV by name match against the TV's own installed app list (e.g.
+    'youtube', 'netflix') — no hardcoded app-id map to keep in sync. Exact title match wins
+    first; live-tested 2026-07-03 found that a plain first-substring-match picks 'YouTube
+    Kids' over 'YouTube' every time (Kids happens to list first and 'youtube' is a substring
+    of both), so among substring matches the SHORTEST title wins — closest to an exact match,
+    same reasoning."""
     name = args.strip().strip('"')
     if not name:
         return "บอกชื่อแอปที่จะเปิดด้วยค่ะ"
@@ -974,7 +978,11 @@ def tool_tv_launch_app(args):
         return f"ต่อทีวีไม่ได้ค่ะ: {e}"
     app_ctl = ApplicationControl(client)
     apps = app_ctl.list_apps()
-    match = next((a for a in apps if name.lower() in a["title"].lower()), None)
+    name_lower = name.lower()
+    match = next((a for a in apps if a["title"].lower() == name_lower), None)
+    if not match:
+        candidates = [a for a in apps if name_lower in a["title"].lower()]
+        match = min(candidates, key=lambda a: len(a["title"])) if candidates else None
     if not match:
         return f"หาแอป '{name}' ในทีวีไม่เจอค่ะ"
     app_ctl.launch(match)
