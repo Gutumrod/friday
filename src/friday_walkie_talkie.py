@@ -18,6 +18,7 @@ import threading
 import base64
 import hashlib
 import uuid
+import cv2
 from datetime import datetime, timedelta
 from ddgs import DDGS
 
@@ -820,6 +821,72 @@ def tool_empty_recycle_bin(_args=""):
         return "ล้างถังรีไซเคิลให้แล้วค่ะ"
     return f"ล้างถังรีไซเคิลไม่สำเร็จค่ะ (code {result})"
 
+# 2026-07-03: CEO wants snapshot-on-ask, not a Gemini-Live-style continuous stream — two
+# separate triggers (open_camera, then look_camera whenever asked "what do you see") instead
+# of a polling loop that would burn a vision API call every N seconds for no reason.
+_camera = None
+_camera_lock = threading.Lock()
+
+def tool_open_camera(_args=""):
+    """Opens the default webcam and keeps the handle in _camera so look_camera can grab a
+    frame instantly instead of re-initializing the device every call. CONFIRM_GATED — same
+    privacy reasoning as clipboard_read: a misheard trigger turning on a camera nobody asked
+    for is worse than one confirm question."""
+    global _camera
+    with _camera_lock:
+        if _camera is not None and _camera.isOpened():
+            return "กล้องเปิดอยู่แล้วค่ะ"
+        cam = cv2.VideoCapture(0)
+        if not cam.isOpened():
+            cam.release()
+            return "เปิดกล้องไม่ได้ค่ะ ไม่เจอเว็บแคมที่เครื่องนี้"
+        _camera = cam
+    return "เปิดกล้องแล้วค่ะ"
+
+def tool_close_camera(_args=""):
+    """Releases the webcam device opened by tool_open_camera."""
+    global _camera
+    with _camera_lock:
+        if _camera is None:
+            return "กล้องไม่ได้เปิดอยู่ค่ะ"
+        _camera.release()
+        _camera = None
+    return "ปิดกล้องแล้วค่ะ"
+
+def _ask_ollama_vision(image_b64, question):
+    """Single-shot image Q&A — separate from ask_ollama() since this has no conversation
+    history/tools, just one frame + one question."""
+    payload = {
+        "model": MODEL_NAME,
+        "messages": [{"role": "user", "content": question, "images": [image_b64]}],
+        "stream": False,
+    }
+    try:
+        response = requests.post(OLLAMA_URL, json=payload, timeout=30)
+    except Exception as e:
+        return f"ถามโมเดลเรื่องภาพไม่สำเร็จค่ะ: {e}"
+    if response.status_code != 200:
+        return f"ถามโมเดลเรื่องภาพไม่สำเร็จค่ะ (status {response.status_code})"
+    return response.json()["message"].get("content", "").strip() or "ฟรายเดย์ดูภาพไม่ออกค่ะ"
+
+def tool_look_camera(args):
+    """Grabs one frame from the already-open camera and asks the vision-capable model what's
+    in it. Never opens the camera itself — a misheard 'look_camera' with no camera open just
+    returns a clean error instead of silently turning the webcam on, keeping open_camera as
+    the one privacy-sensitive checkpoint."""
+    with _camera_lock:
+        if _camera is None or not _camera.isOpened():
+            return "กล้องยังไม่ได้เปิดค่ะ บอกให้ฟรายเดย์เปิดกล้องก่อนนะคะ"
+        ok, frame = _camera.read()
+    if not ok:
+        return "ถ่ายภาพจากกล้องไม่สำเร็จค่ะ"
+    ok, buf = cv2.imencode(".jpg", frame)
+    if not ok:
+        return "แปลงภาพไม่สำเร็จค่ะ"
+    image_b64 = base64.b64encode(buf).decode("ascii")
+    question = args.strip().strip('"') or "อธิบายสั้นๆ 1-2 ประโยคว่าเห็นอะไรในภาพนี้ เป็นภาษาไทย"
+    return _ask_ollama_vision(image_b64, question)
+
 TOOLS = {
     "get_time": tool_get_time,
     "disk_space": tool_disk_space,
@@ -841,6 +908,9 @@ TOOLS = {
     "cancel_timer": tool_cancel_timer,
     "empty_recycle_bin": tool_empty_recycle_bin,
     "dispatch_to_hermes": tool_dispatch_to_hermes,
+    "open_camera": tool_open_camera,
+    "look_camera": tool_look_camera,
+    "close_camera": tool_close_camera,
 }
 # Native Ollama function-calling schemas for every entry in TOOLS above — replaces the old
 # "[TOOL: name(args)] embedded in reply text, parsed with a regex" approach. The model gets
@@ -923,6 +993,17 @@ TOOL_SCHEMAS = [
             "title": {"type": "string", "description": "ชื่องานสั้นๆ"},
             "message": {"type": "string", "description": "รายละเอียดงานให้ Hermes ทำได้ทันทีโดยไม่ต้องถามกลับ ต้องมีครบ 3 อย่าง: เป้าหมาย (ทำอะไร), ผลลัพธ์ที่ต้องการ (ได้อะไร), และไฟล์/โฟลเดอร์ที่เกี่ยวข้อง (ที่ไหน)"},
         }, "required": ["title", "message"]}}},
+    {"type": "function", "function": {
+        "name": "open_camera", "description": "เปิดกล้องเว็บแคมของเครื่อง เตรียมไว้ให้พร้อมถ่ายภาพ",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "look_camera",
+        "description": "ถ่ายภาพจากกล้องที่เปิดอยู่ตอนนี้ แล้วบอกว่าเห็นอะไรในภาพ ต้องเปิดกล้องก่อนด้วย open_camera",
+        "parameters": {"type": "object", "properties": {
+            "question": {"type": "string", "description": "คำถามเฉพาะเจาะจงเกี่ยวกับภาพ ถ้าไม่ระบุจะอธิบายภาพทั่วไป"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "close_camera", "description": "ปิดกล้องเว็บแคมที่เปิดไว้",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
 ]
 
 # tool_* functions above all take one positional string (pre-dating native tool-calling).
@@ -932,6 +1013,7 @@ _TOOL_ARG_KEY = {
     "open_app": "name", "close_app": "name", "set_volume": "direction",
     "open_web": "query", "search_web": "query", "remember": "text",
     "clipboard_write": "text", "media_control": "action", "cancel_timer": "which",
+    "look_camera": "question",
 }
 
 def _pack_args(name, args):
@@ -1059,6 +1141,11 @@ CONFIRM_GATED = {
         "question": lambda args: f"จะส่งงานให้ Hermes ว่า '{args.split('|', 1)[0].strip()}' นะคะ ยืนยันไหมคะ",
         "cancel": lambda args: f"ยกเลิกการส่งงาน '{args.split('|', 1)[0].strip()}' ให้ Hermes แล้วค่ะ",
         "execute": tool_dispatch_to_hermes,
+    },
+    "open_camera": {
+        "question": lambda _args: "ต้องการเปิดกล้องเว็บแคมนะคะ ยืนยันไหมคะ",
+        "cancel": lambda _args: "ยกเลิกการเปิดกล้องแล้วค่ะ",
+        "execute": tool_open_camera,
     },
 }
 

@@ -777,7 +777,11 @@ def check_pack_args():
         raise AssertionError("set_timer compound packing failed")
     if fw._pack_args("set_timer", {"minutes": 5}) != "5|ครบเวลาที่ตั้งไว้แล้วค่ะ":
         raise AssertionError("set_timer default message packing failed")
-    return "close_app/no-arg/set_timer packing ok"
+    if fw._pack_args("look_camera", {"question": "มีกี่คน"}) != "มีกี่คน":
+        raise AssertionError("look_camera question packing failed")
+    if fw._pack_args("look_camera", {}) != "":
+        raise AssertionError("look_camera empty-question packing failed")
+    return "close_app/no-arg/set_timer/look_camera packing ok"
 
 
 def check_run_native_tools():
@@ -890,6 +894,91 @@ def check_dispatch_to_hermes_missing_message_rejected():
     return out
 
 
+def check_camera_gate_wiring():
+    """open_camera is the one privacy-sensitive checkpoint (2026-07-03 decision) —
+    look_camera/close_camera stay ungated so asking 'what do you see' repeatedly after the
+    camera's already open doesn't re-prompt for no reason."""
+    gate = fw.CONFIRM_GATED.get("open_camera")
+    if not gate or gate["execute"] is not fw.tool_open_camera:
+        raise AssertionError("open_camera missing from CONFIRM_GATED or wired to the wrong function")
+    for name in ("open_camera", "look_camera", "close_camera"):
+        if name not in fw.TOOLS:
+            raise AssertionError(f"{name} missing from TOOLS")
+    if "look_camera" in fw.CONFIRM_GATED or "close_camera" in fw.CONFIRM_GATED:
+        raise AssertionError("look_camera/close_camera should stay ungated")
+    q, c = gate["question"]("_"), gate["cancel"]("_")
+    if not q or not c:
+        raise AssertionError("open_camera question/cancel text must not be empty")
+    return f"wired ok — question={q!r} cancel={c!r}"
+
+
+class _FakeCamera:
+    def __init__(self):
+        self._opened = True
+        self.released = False
+
+    def isOpened(self):
+        return self._opened and not self.released
+
+    def read(self):
+        return True, object()  # frame content doesn't matter, imencode is faked too
+
+    def release(self):
+        self.released = True
+
+
+def check_camera_open_look_close_roundtrip():
+    """Exercises open->look->close with a fake cv2.VideoCapture (no real webcam needed) and a
+    fake Ollama vision response, plus the guard rails: look_camera refuses before open_camera,
+    open_camera is a no-op if already open, close_camera is idempotent."""
+    orig_video_capture, orig_imencode, orig_post = fw.cv2.VideoCapture, fw.cv2.imencode, fw.requests.post
+    fake_cam_holder = {}
+
+    def fake_video_capture(_index):
+        cam = _FakeCamera()
+        fake_cam_holder["cam"] = cam
+        return cam
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"message": {"content": "เห็นแมวตัวหนึ่งค่ะ"}}
+
+    fw.cv2.VideoCapture = fake_video_capture
+    fw.cv2.imencode = lambda ext, frame: (True, b"\x00\x01")
+    fw.requests.post = lambda *a, **kw: FakeResponse()
+    try:
+        before_open = fw.tool_look_camera("")
+        if "ยังไม่ได้เปิด" not in before_open:
+            raise AssertionError(f"look_camera before open_camera should refuse, got: {before_open}")
+
+        opened = fw.tool_open_camera()
+        if "เปิดกล้องแล้ว" not in opened:
+            raise AssertionError(f"expected open confirmation, got: {opened}")
+
+        opened_again = fw.tool_open_camera()
+        if "เปิดอยู่แล้ว" not in opened_again:
+            raise AssertionError(f"re-opening should be a no-op message, got: {opened_again}")
+
+        seen = fw.tool_look_camera("")
+        if seen != "เห็นแมวตัวหนึ่งค่ะ":
+            raise AssertionError(f"expected the fake vision response, got: {seen}")
+
+        closed = fw.tool_close_camera()
+        if "ปิดกล้องแล้ว" not in closed:
+            raise AssertionError(f"expected close confirmation, got: {closed}")
+        if not fake_cam_holder["cam"].released:
+            raise AssertionError("underlying camera object was never released")
+
+        closed_again = fw.tool_close_camera()
+        if "ไม่ได้เปิดอยู่" not in closed_again:
+            raise AssertionError(f"closing an already-closed camera should say so, got: {closed_again}")
+    finally:
+        fw.cv2.VideoCapture, fw.cv2.imencode, fw.requests.post = orig_video_capture, orig_imencode, orig_post
+        fw._camera = None
+    return "open(no-op on repeat)->look(refuses-before-open)->close(idempotent) ok"
+
+
 check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
 check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
 check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
@@ -912,6 +1001,8 @@ check("tts_cache_hit_skips_regeneration", check_tts_cache_hit_skips_regeneration
 check("mic_listening_default", check_mic_listening_default_clear)
 check("migrate_legacy_day_files", check_migrate_legacy_day_files)
 check("start_new_session_and_log", check_start_new_session_and_log)
+check("camera_gate_wiring", check_camera_gate_wiring)
+check("camera_open_look_close_roundtrip", check_camera_open_look_close_roundtrip)
 
 print("\n=== Friday Tool Self-Check ===")
 for name, ok, out in results:
