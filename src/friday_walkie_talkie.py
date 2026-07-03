@@ -19,6 +19,9 @@ import base64
 import hashlib
 import uuid
 import cv2
+from pywebostv.connection import WebOSClient
+from pywebostv.controls import SystemControl, MediaControl, ApplicationControl, InputControl
+import yt_dlp
 from datetime import datetime, timedelta
 from ddgs import DDGS
 
@@ -32,6 +35,14 @@ JARVIS_VOICE = "th-TH-NiwatNeural"  # Microsoft Niwat (Thai Male) — used only 
 SLOW_WARNING_MESSAGE = "ผมจาวิส รายงานครับ ไฟรเดย์กำลังเจอปัญหา รอสักครู่ครับนาย"
 DEVICE_INDEX = None  # ใส่เลข Index ของไมค์ที่ใช้จริง (เช่น 4 สำหรับ HyperX, 1 สำหรับ Razer X) ถ้าเว้น None จะใช้ไมค์หลักของ Windows
 CAMERA_INDEX = 0  # index ของกล้องเว็บแคมที่ใช้จริง (เครื่องนี้มีกล้องเดียว = Razer Kiyo = 0) เครื่องอื่นที่มีหลายตัวอาจไม่ใช่ 0 เช็คด้วย Get-PnpDevice -Class Camera ก่อนเปลี่ยน
+
+# LG webOS TV (2026-07-03 live test, see notes/lg-tv-control-live-test-2026-07-03.md) — ค่าพวกนี้
+# เฉพาะเครื่องนี้ทั้งหมด เปลี่ยนตามบ้าน/ทีวีจริงถ้าเอาไปใช้เครื่องอื่น
+TV_IP = "192.168.1.134"  # เช็คใหม่ถ้าต่อไม่ติด (DHCP lease อาจเปลี่ยน IP)
+TV_MAC = "58:fd:b1:dc:44:c3"  # จาก arp -a ตอนทีวีปิด — ใช้ยิง Wake-on-LAN
+TV_CLIENT_KEY = "974cfe0f19cc5c3ac719b2e3726ffcaf"  # จับคู่ (pairing) ไว้แล้วครั้งเดียว ใช้ซ้ำได้ตลอด ไม่ต้องขอใหม่
+TV_CONNECT_TIMEOUT = 5  # วินาที — กันไม่ให้ Friday ค้างทั้งเสียงถ้าทีวีปิด/ต่อเน็ตไม่ติด
+TV_BROADCAST_IP = "192.168.1.255"  # ที่อยู่ broadcast ของวง LAN นี้ ใช้ยิง Wake-on-LAN
 
 # dispatch_to_hermes — see docs/../shared/decisions/dispatch-to-hermes-contract-2026-07-02.md
 MAILBOX_DIR = r"D:\AI-Workspace\mailbox"
@@ -888,6 +899,149 @@ def tool_look_camera(args):
     question = args.strip().strip('"') or "อธิบายสั้นๆ 1-2 ประโยคว่าเห็นอะไรในภาพนี้ เป็นภาษาไทย"
     return _ask_ollama_vision(image_b64, question)
 
+# LG webOS TV control (2026-07-03 live test — see notes/lg-tv-control-live-test-2026-07-03.md
+# for the full trial-and-error log, incl. the two dead ends: IME insertText doesn't reach
+# YouTube's own on-screen keyboard, and Chromecast/DIAL isn't supported on this TV at all).
+def _tv_connect():
+    """Connects + pairs with the TV using the already-negotiated TV_CLIENT_KEY — no fresh
+    pairing prompt needed. ws4py's connect() has no built-in timeout, so a command sent while
+    the TV is off/unreachable would otherwise hang Friday's whole voice loop instead of
+    failing fast; the socket default timeout wrapper here is what actually bounds it."""
+    client = WebOSClient(TV_IP, secure=True)
+    orig_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(TV_CONNECT_TIMEOUT)
+    try:
+        client.connect()
+    finally:
+        socket.setdefaulttimeout(orig_timeout)
+    store = {"client_key": TV_CLIENT_KEY}
+    for _status in client.register(store):
+        pass
+    return client
+
+def tool_tv_power(args):
+    """'on' fires a Wake-on-LAN magic packet (needs 'Wake on LAN'/'Mobile TV On' enabled in the
+    TV's own settings — verified working 2026-07-03). 'off' uses SystemControl.power_off()
+    over the paired connection, so it only works while the TV is already reachable."""
+    action = args.strip().strip('"').lower()
+    if action == "on":
+        mac_bytes = bytes.fromhex(TV_MAC.replace(":", ""))
+        packet = b"\xff" * 6 + mac_bytes * 16
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.sendto(packet, (TV_BROADCAST_IP, 9))
+        sock.close()
+        return "เปิดทีวีให้แล้วค่ะ"
+    if action == "off":
+        try:
+            client = _tv_connect()
+        except Exception as e:
+            return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+        SystemControl(client).power_off()
+        return "ปิดทีวีให้แล้วค่ะ"
+    return f"ฟรายเดย์ไม่เข้าใจคำสั่งทีวีแบบ '{args}' สั่งได้แค่ on/off ค่ะ"
+
+def tool_tv_volume(args):
+    """Adjusts the TV's own volume over the network — separate from tool_set_volume, which
+    adjusts this PC's speaker volume, not the TV's."""
+    action = args.strip().strip('"').lower()
+    if action not in ("up", "down", "mute"):
+        return f"ฟรายเดย์ปรับเสียงทีวีแบบ '{args}' ไม่รู้จักค่ะ สั่งได้แค่ up/down/mute ค่ะ"
+    try:
+        client = _tv_connect()
+    except Exception as e:
+        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+    media = MediaControl(client)
+    if action == "up":
+        result = media.volume_up()
+    elif action == "down":
+        result = media.volume_down()
+    else:
+        result = media.mute(True)
+    if "volume" in result:
+        return f"ปรับเสียงทีวีให้แล้วค่ะ (ตอนนี้ {result['volume']})"
+    return "ปิดเสียงทีวีให้แล้วค่ะ"
+
+def tool_tv_launch_app(args):
+    """Launches an app on the TV by case-insensitive substring match against the TV's own
+    installed app list (e.g. 'youtube', 'netflix') — no hardcoded app-id map to keep in sync."""
+    name = args.strip().strip('"')
+    if not name:
+        return "บอกชื่อแอปที่จะเปิดด้วยค่ะ"
+    try:
+        client = _tv_connect()
+    except Exception as e:
+        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+    app_ctl = ApplicationControl(client)
+    apps = app_ctl.list_apps()
+    match = next((a for a in apps if name.lower() in a["title"].lower()), None)
+    if not match:
+        return f"หาแอป '{name}' ในทีวีไม่เจอค่ะ"
+    app_ctl.launch(match)
+    return f"เปิด {match['title']} ให้แล้วค่ะ"
+
+def tool_tv_play_video(args):
+    """Voice 'play this on TV' flow, live-verified 2026-07-03 end to end (search 'HONNE - Day
+    1' by voice -> correct song played, zero manual button presses). Two parts:
+    1) yt-dlp's ytsearch (searches YouTube's own index, not a generic web search — tested
+       noticeably more accurate for matching a spoken title, see live-test notes) resolves the
+       query to one video.
+    2) The exact sequence that survives YouTube's account-picker cold-start, discovered by
+       trial and error: home -> launch with a contentTarget deep-link -> wait for the picker to
+       render -> auto-press OK. The picker does NOT discard the pending deep-link — it was
+       misdiagnosed as a hard limit earlier in testing before this was tried.
+    Returns the matched title so Friday reads it back — search isn't perfect on vague/lyrics-
+    style queries (see notes), so this lets นาย catch a wrong match immediately."""
+    query = args.strip().strip('"')
+    if not query:
+        return "บอกชื่อเพลง/วิดีโอที่จะเปิดด้วยค่ะ"
+    try:
+        ydl_opts = {"quiet": True, "default_search": "ytsearch1", "noplaylist": True, "skip_download": True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(query, download=False)
+            entry = info["entries"][0]
+        title, video_id = entry["title"], entry["id"]
+    except Exception as e:
+        return f"หาเพลง '{query}' ไม่เจอค่ะ: {e}"
+
+    try:
+        client = _tv_connect()
+    except Exception as e:
+        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+
+    inp = InputControl(client)
+    inp.connect_input()
+    inp.home()
+    time.sleep(3)
+    app_ctl = ApplicationControl(client)
+    apps = app_ctl.list_apps()
+    youtube = next((a for a in apps if a["id"] == "youtube.leanback.v4"), None)
+    if not youtube:
+        return "หาแอป YouTube ในทีวีไม่เจอค่ะ"
+    app_ctl.launch(youtube, params={"contentTarget": f"https://www.youtube.com/watch?v={video_id}"})
+    time.sleep(5)
+    inp.ok()
+    return f"กำลังเปิด {title} ให้ค่ะนาย"
+
+# Named-button subset of InputControl.INPUT_COMMANDS — excludes move/click/scroll (raw
+# pointer/mouse commands, not a named remote button a voice command would ever name).
+_TV_BUTTONS = set(InputControl.INPUT_COMMANDS.keys()) - {"move", "click", "scroll"}
+
+def tool_tv_remote_button(args):
+    """Sends one named remote-button press — see _TV_BUTTONS for the full allowed set (nav,
+    numbers, colors, volume/channel, media transport)."""
+    button = args.strip().strip('"').lower()
+    if button not in _TV_BUTTONS:
+        return f"ฟรายเดย์ไม่รู้จักปุ่ม '{args}' ค่ะ"
+    try:
+        client = _tv_connect()
+    except Exception as e:
+        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+    inp = InputControl(client)
+    inp.connect_input()
+    getattr(inp, button)()
+    return f"กดปุ่ม {button} ที่ทีวีให้แล้วค่ะ"
+
 TOOLS = {
     "get_time": tool_get_time,
     "disk_space": tool_disk_space,
@@ -912,6 +1066,11 @@ TOOLS = {
     "open_camera": tool_open_camera,
     "look_camera": tool_look_camera,
     "close_camera": tool_close_camera,
+    "tv_power": tool_tv_power,
+    "tv_volume": tool_tv_volume,
+    "tv_launch_app": tool_tv_launch_app,
+    "tv_play_video": tool_tv_play_video,
+    "tv_remote_button": tool_tv_remote_button,
 }
 # Native Ollama function-calling schemas for every entry in TOOLS above — replaces the old
 # "[TOOL: name(args)] embedded in reply text, parsed with a regex" approach. The model gets
@@ -1005,6 +1164,28 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "close_camera", "description": "ปิดกล้องเว็บแคมที่เปิดไว้",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "tv_power", "description": "เปิดหรือปิดทีวีในบ้านผ่านเครือข่าย",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["on", "off"], "description": "on = เปิดทีวี, off = ปิดทีวี"}}, "required": ["action"]}}},
+    {"type": "function", "function": {
+        "name": "tv_volume", "description": "ปรับเสียงของทีวีในบ้าน (ไม่ใช่เสียงเครื่องนี้)",
+        "parameters": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["up", "down", "mute"], "description": "ทิศทางการปรับเสียงทีวี"}}, "required": ["action"]}}},
+    {"type": "function", "function": {
+        "name": "tv_launch_app", "description": "เปิดแอปในทีวี เช่น YouTube, Netflix",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "ชื่อแอปที่จะเปิด"}}, "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "tv_play_video",
+        "description": "ค้นหาแล้วเปิดเพลง/วิดีโอเฉพาะเจาะจงบน YouTube ในทีวีให้เล่นอัตโนมัติ",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string", "description": "ชื่อเพลง/วิดีโอ/ศิลปินที่จะเปิด"}}, "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "tv_remote_button",
+        "description": "กดปุ่มรีโมททีวีตามชื่อ เช่น home, back, channel_up, volume_down, num_5",
+        "parameters": {"type": "object", "properties": {
+            "button": {"type": "string", "description": "ชื่อปุ่มรีโมท เช่น home/back/ok/channel_up/channel_down/num_0-num_9/red/green/yellow/blue"}}, "required": ["button"]}}},
 ]
 
 # tool_* functions above all take one positional string (pre-dating native tool-calling).
@@ -1015,6 +1196,8 @@ _TOOL_ARG_KEY = {
     "open_web": "query", "search_web": "query", "remember": "text",
     "clipboard_write": "text", "media_control": "action", "cancel_timer": "which",
     "look_camera": "question",
+    "tv_power": "action", "tv_volume": "action", "tv_launch_app": "name",
+    "tv_play_video": "query", "tv_remote_button": "button",
 }
 
 def _pack_args(name, args):
@@ -1147,6 +1330,31 @@ CONFIRM_GATED = {
         "question": lambda _args: "ต้องการเปิดกล้องเว็บแคมนะคะ ยืนยันไหมคะ",
         "cancel": lambda _args: "ยกเลิกการเปิดกล้องแล้วค่ะ",
         "execute": tool_open_camera,
+    },
+    "tv_power": {
+        "question": lambda args: f"ต้องการ{'เปิด' if args == 'on' else 'ปิด'}ทีวีนะคะ ยืนยันไหมคะ",
+        "cancel": lambda args: f"ยกเลิกการ{'เปิด' if args == 'on' else 'ปิด'}ทีวีแล้วค่ะ",
+        "execute": tool_tv_power,
+    },
+    "tv_volume": {
+        "question": lambda args: f"ต้องการปรับเสียงทีวีแบบ '{args}' นะคะ ยืนยันไหมคะ",
+        "cancel": lambda _args: "ยกเลิกการปรับเสียงทีวีแล้วค่ะ",
+        "execute": tool_tv_volume,
+    },
+    "tv_launch_app": {
+        "question": lambda args: f"ต้องการเปิดแอป '{args}' ในทีวีนะคะ ยืนยันไหมคะ",
+        "cancel": lambda args: f"ยกเลิกการเปิดแอป '{args}' แล้วค่ะ",
+        "execute": tool_tv_launch_app,
+    },
+    "tv_play_video": {
+        "question": lambda args: f"ต้องการเปิด '{args}' ในทีวีนะคะ ยืนยันไหมคะ",
+        "cancel": lambda args: f"ยกเลิกการเปิด '{args}' แล้วค่ะ",
+        "execute": tool_tv_play_video,
+    },
+    "tv_remote_button": {
+        "question": lambda args: f"ต้องการกดปุ่ม '{args}' ที่ทีวีนะคะ ยืนยันไหมคะ",
+        "cancel": lambda args: f"ยกเลิกการกดปุ่ม '{args}' แล้วค่ะ",
+        "execute": tool_tv_remote_button,
     },
 }
 

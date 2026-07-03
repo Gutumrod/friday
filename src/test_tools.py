@@ -781,7 +781,11 @@ def check_pack_args():
         raise AssertionError("look_camera question packing failed")
     if fw._pack_args("look_camera", {}) != "":
         raise AssertionError("look_camera empty-question packing failed")
-    return "close_app/no-arg/set_timer/look_camera packing ok"
+    if fw._pack_args("tv_power", {"action": "on"}) != "on":
+        raise AssertionError("tv_power arg packing failed")
+    if fw._pack_args("tv_play_video", {"query": "day one"}) != "day one":
+        raise AssertionError("tv_play_video arg packing failed")
+    return "close_app/no-arg/set_timer/look_camera/tv_* packing ok"
 
 
 def check_run_native_tools():
@@ -979,6 +983,157 @@ def check_camera_open_look_close_roundtrip():
     return "open(no-op on repeat)->look(refuses-before-open)->close(idempotent) ok"
 
 
+def check_tv_gate_wiring():
+    """All 5 TV tools have a real-world effect on a physical device — gated like every other
+    Tier-1 tool (set_volume/media_control/open_app), same 2026-07-02 policy."""
+    expected = {
+        "tv_power": fw.tool_tv_power, "tv_volume": fw.tool_tv_volume,
+        "tv_launch_app": fw.tool_tv_launch_app, "tv_play_video": fw.tool_tv_play_video,
+        "tv_remote_button": fw.tool_tv_remote_button,
+    }
+    for name, fn in expected.items():
+        gate = fw.CONFIRM_GATED.get(name)
+        if not gate or gate["execute"] is not fn:
+            raise AssertionError(f"{name} missing from CONFIRM_GATED or wired to the wrong function")
+        if name not in fw.TOOLS:
+            raise AssertionError(f"{name} missing from TOOLS")
+        q, c = gate["question"]("_"), gate["cancel"]("_")
+        if not q or not c:
+            raise AssertionError(f"{name} question/cancel text must not be empty")
+    return f"{len(expected)} TV tools wired to CONFIRM_GATED correctly"
+
+
+def check_tv_power_volume_launch_roundtrip():
+    """Exercises tv_power/tv_volume/tv_launch_app against fake pywebostv Control classes (no
+    real TV needed) — confirms arg wiring and spoken confirmations."""
+    orig_system, orig_media, orig_app = fw.SystemControl, fw.MediaControl, fw.ApplicationControl
+    orig_connect, orig_socket_class = fw._tv_connect, fw.socket.socket
+    wol_sent = []
+
+    class FakeSystemControl:
+        def __init__(self, client): pass
+        def power_off(self): return {"returnValue": True}
+
+    class FakeMediaControl:
+        def __init__(self, client): pass
+        def volume_up(self): return {"volume": 9, "returnValue": True}
+        def volume_down(self): return {"volume": 8, "returnValue": True}
+        def mute(self, val): return {"returnValue": True}
+
+    class FakeApplicationControl:
+        def __init__(self, client): pass
+        def list_apps(self):
+            return [{"id": "youtube.leanback.v4", "title": "YouTube"}, {"id": "netflix.id", "title": "Netflix"}]
+        def launch(self, app, content_id=None, params=None):
+            return {"id": app["id"]}
+
+    class FakeSocket:
+        def __init__(self, *a, **kw): pass
+        def setsockopt(self, *a): pass
+        def sendto(self, packet, addr): wol_sent.append((packet, addr))
+        def close(self): pass
+
+    fw.SystemControl, fw.MediaControl, fw.ApplicationControl = FakeSystemControl, FakeMediaControl, FakeApplicationControl
+    fw._tv_connect = lambda: object()
+    fw.socket.socket = lambda *a, **kw: FakeSocket()
+    try:
+        on_result = fw.tool_tv_power("on")
+        if "เปิดทีวี" not in on_result:
+            raise AssertionError(f"expected power-on confirmation, got: {on_result}")
+        if not wol_sent or wol_sent[0][1] != (fw.TV_BROADCAST_IP, 9):
+            raise AssertionError(f"WoL packet not sent to expected broadcast address, got: {wol_sent}")
+
+        off_result = fw.tool_tv_power("off")
+        if "ปิดทีวี" not in off_result:
+            raise AssertionError(f"expected power-off confirmation, got: {off_result}")
+
+        invalid_result = fw.tool_tv_power("โยกโย่")
+        if "ไม่เข้าใจ" not in invalid_result:
+            raise AssertionError(f"expected rejection for invalid action, got: {invalid_result}")
+
+        vol_result = fw.tool_tv_volume("up")
+        if "9" not in vol_result:
+            raise AssertionError(f"expected volume 9 in confirmation, got: {vol_result}")
+
+        mute_result = fw.tool_tv_volume("mute")
+        if "ปิดเสียง" not in mute_result:
+            raise AssertionError(f"expected mute confirmation, got: {mute_result}")
+
+        app_result = fw.tool_tv_launch_app("youtube")
+        if "YouTube" not in app_result:
+            raise AssertionError(f"expected YouTube launch confirmation, got: {app_result}")
+
+        missing_app_result = fw.tool_tv_launch_app("ไม่มีแอปนี้")
+        if "ไม่เจอ" not in missing_app_result:
+            raise AssertionError(f"expected not-found message, got: {missing_app_result}")
+    finally:
+        fw.SystemControl, fw.MediaControl, fw.ApplicationControl = orig_system, orig_media, orig_app
+        fw._tv_connect = orig_connect
+        fw.socket.socket = orig_socket_class
+    return "tv_power(on/off/invalid) + tv_volume(up/mute) + tv_launch_app(found/missing) ok"
+
+
+def check_tv_play_video_and_remote_button():
+    """Exercises the deep-link+auto-OK sequence (2026-07-03 live-verified flow) and remote
+    button dispatch against fake pywebostv/yt-dlp — confirms the exact call sequence
+    (home -> launch(contentTarget) -> ok) without touching the real TV or network."""
+    orig_app, orig_input = fw.ApplicationControl, fw.InputControl
+    orig_connect, orig_ytdl, orig_sleep = fw._tv_connect, fw.yt_dlp.YoutubeDL, fw.time.sleep
+    launched = []
+    pressed = []
+
+    class FakeApplicationControl:
+        def __init__(self, client): pass
+        def list_apps(self):
+            return [{"id": "youtube.leanback.v4", "title": "YouTube"}]
+        def launch(self, app, content_id=None, params=None):
+            launched.append(params)
+            return {"id": app["id"]}
+
+    class FakeInputControl:
+        def __init__(self, client): pass
+        def connect_input(self): pass
+        def home(self): pressed.append("home")
+        def ok(self): pressed.append("ok")
+        def __getattr__(self, name):
+            return lambda: pressed.append(name)
+
+    class FakeYoutubeDL:
+        def __init__(self, opts): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def extract_info(self, query, download=False):
+            return {"entries": [{"title": "FAKE TITLE", "id": "fakeid123"}]}
+
+    fw.ApplicationControl, fw.InputControl = FakeApplicationControl, FakeInputControl
+    fw._tv_connect = lambda: object()
+    fw.yt_dlp.YoutubeDL = FakeYoutubeDL
+    fw.time.sleep = lambda s: None  # skip the real home->launch->ok delays in the test
+    try:
+        result = fw.tool_tv_play_video("some song")
+        if "FAKE TITLE" not in result:
+            raise AssertionError(f"expected matched title in confirmation, got: {result}")
+        if launched != [{"contentTarget": "https://www.youtube.com/watch?v=fakeid123"}]:
+            raise AssertionError(f"expected the deep-link params on launch, got: {launched}")
+        if pressed != ["home", "ok"]:
+            raise AssertionError(f"expected home->ok button sequence, got: {pressed}")
+
+        pressed.clear()
+        btn_result = fw.tool_tv_remote_button("channel_up")
+        if "channel_up" not in btn_result:
+            raise AssertionError(f"expected button confirmation, got: {btn_result}")
+        if pressed != ["channel_up"]:
+            raise AssertionError(f"expected channel_up button press, got: {pressed}")
+
+        invalid_btn = fw.tool_tv_remote_button("not_a_button")
+        if "ไม่รู้จัก" not in invalid_btn:
+            raise AssertionError(f"expected rejection for unknown button, got: {invalid_btn}")
+    finally:
+        fw.ApplicationControl, fw.InputControl = orig_app, orig_input
+        fw._tv_connect, fw.yt_dlp.YoutubeDL, fw.time.sleep = orig_connect, orig_ytdl, orig_sleep
+    return "tv_play_video(deep-link+ok sequence) + tv_remote_button(valid/invalid) ok"
+
+
 check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
 check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
 check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
@@ -1003,6 +1158,9 @@ check("migrate_legacy_day_files", check_migrate_legacy_day_files)
 check("start_new_session_and_log", check_start_new_session_and_log)
 check("camera_gate_wiring", check_camera_gate_wiring)
 check("camera_open_look_close_roundtrip", check_camera_open_look_close_roundtrip)
+check("tv_gate_wiring", check_tv_gate_wiring)
+check("tv_power_volume_launch_roundtrip", check_tv_power_volume_launch_roundtrip)
+check("tv_play_video_and_remote_button", check_tv_play_video_and_remote_button)
 
 print("\n=== Friday Tool Self-Check ===")
 for name, ok, out in results:
