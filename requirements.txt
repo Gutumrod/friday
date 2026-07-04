@@ -8,6 +8,7 @@ psutil
 opencv-python>=4.10.0
 pywebostv>=0.8.9
 yt-dlp>=2026.6.9
+google-cloud-speech
 torch
 torchaudio
 f5-tts

@@ -587,28 +587,28 @@ def check_confirm_particle_stripping():
 
 def check_audio_serialization():
     """Two speak() calls from different threads (mirrors main-loop speak() racing a
-    set_timer reminder) must never run generate_speech concurrently — AUDIO_LOCK should
-    force the second call to wait for the first to finish."""
-    import asyncio as _asyncio
+    set_timer reminder) must never run generate_speech_fallback (JaiTTS, the 2026-07-04
+    primary voice) concurrently — AUDIO_LOCK should force the second call to wait for the
+    first to finish."""
     import threading as _threading
 
-    original = fw.generate_speech
+    original = fw.generate_speech_fallback
     events = []
 
-    async def fake_generate_speech(text, voice=None):
+    def fake_generate_speech_fallback(text):
         events.append(("start", time.time()))
-        await _asyncio.sleep(0.3)
-        with open(fw.TEMP_AUDIO_FILE, "wb") as f:
+        time.sleep(0.3)
+        with open(fw.TEMP_AUDIO_FILE_FALLBACK, "wb") as f:
             f.write(b"\0")
         events.append(("end", time.time()))
         return True
 
     # Isolate from the real on-disk TTS cache — speak() writes/reads TTS_CACHE_DIR
-    # unconditionally, and a cache hit would skip fake_generate_speech entirely on any run
-    # after the first, silently breaking this test's event count.
+    # unconditionally, and a cache hit would skip fake_generate_speech_fallback entirely on
+    # any run after the first, silently breaking this test's event count.
     orig_cache_dir = fw.TTS_CACHE_DIR
     fw.TTS_CACHE_DIR = tempfile.mkdtemp()
-    fw.generate_speech = fake_generate_speech
+    fw.generate_speech_fallback = fake_generate_speech_fallback
     try:
         t1 = _threading.Thread(target=fw.speak, args=("test A",))
         t2 = _threading.Thread(target=fw.speak, args=("test B",))
@@ -618,7 +618,7 @@ def check_audio_serialization():
         t1.join()
         t2.join()
     finally:
-        fw.generate_speech = original
+        fw.generate_speech_fallback = original
         shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
         fw.TTS_CACHE_DIR = orig_cache_dir
 
@@ -655,50 +655,15 @@ def check_generate_speech_fallback_live():
     return f"generated {size} bytes of real offline audio (code-switched Thai-English)"
 
 
-def check_speak_uses_fallback_when_edge_tts_fails():
-    """speak() must fall back to the local engine instead of going silent when edge-tts fails
-    all 3 attempts (B3). Stubs both TTS engines (same technique as check_audio_serialization)
-    so this test doesn't depend on real network or the real ~seconds-long model load."""
+def check_speak_falls_back_to_edge_tts_when_jaitts_fails():
+    """speak() must fall back to cloud edge-tts instead of going silent when JaiTTS (primary
+    voice as of 2026-07-04) fails (e.g. GPU/model error). Stubs both TTS engines (same
+    technique as check_audio_serialization) so this test doesn't depend on real network or
+    the real ~seconds-long model load."""
     calls = []
 
-    async def fake_generate_speech_always_fails(text, voice=None):
+    def fake_generate_speech_fallback_always_fails(text):
         return False
-
-    def fake_generate_speech_fallback(text):
-        calls.append(text)
-        with open(fw.TEMP_AUDIO_FILE_FALLBACK, "wb") as f:
-            f.write(b"\0")
-        return True
-
-    orig_primary = fw.generate_speech
-    orig_fallback = fw.generate_speech_fallback
-    orig_cache_dir = fw.TTS_CACHE_DIR
-    fw.TTS_CACHE_DIR = tempfile.mkdtemp()  # isolate from the real cache, see check_audio_serialization
-    fw.generate_speech = fake_generate_speech_always_fails
-    fw.generate_speech_fallback = fake_generate_speech_fallback
-    try:
-        fw.speak("ทดสอบ fallback")
-    finally:
-        fw.generate_speech = orig_primary
-        fw.generate_speech_fallback = orig_fallback
-        shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
-        fw.TTS_CACHE_DIR = orig_cache_dir
-        if os.path.exists(fw.TEMP_AUDIO_FILE_FALLBACK):
-            os.remove(fw.TEMP_AUDIO_FILE_FALLBACK)
-
-    if calls != ["ทดสอบ fallback"]:
-        raise AssertionError(f"expected fallback to be called once with the spoken text, got: {calls}")
-    return "fallback engine invoked when primary failed, file cleaned up after"
-
-
-def check_tts_cache_hit_skips_regeneration():
-    """A second speak() call with identical text+voice must be served from TTS_CACHE_DIR
-    instead of calling generate_speech again — this is what makes repeat phrases (e.g. the
-    CONFIRM_GATED question/cancel strings) skip the network TTS call on the 2nd+ occurrence."""
-    orig_cache_dir = fw.TTS_CACHE_DIR
-    orig_generate = fw.generate_speech
-    fw.TTS_CACHE_DIR = tempfile.mkdtemp()
-    calls = []
 
     async def fake_generate_speech(text, voice=None):
         calls.append(text)
@@ -706,18 +671,55 @@ def check_tts_cache_hit_skips_regeneration():
             f.write(b"\0")
         return True
 
+    orig_primary = fw.generate_speech_fallback
+    orig_fallback = fw.generate_speech
+    orig_cache_dir = fw.TTS_CACHE_DIR
+    fw.TTS_CACHE_DIR = tempfile.mkdtemp()  # isolate from the real cache, see check_audio_serialization
+    fw.generate_speech_fallback = fake_generate_speech_fallback_always_fails
     fw.generate_speech = fake_generate_speech
+    try:
+        fw.speak("ทดสอบ fallback")
+    finally:
+        fw.generate_speech_fallback = orig_primary
+        fw.generate_speech = orig_fallback
+        shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
+        fw.TTS_CACHE_DIR = orig_cache_dir
+        if os.path.exists(fw.TEMP_AUDIO_FILE):
+            os.remove(fw.TEMP_AUDIO_FILE)
+
+    if calls != ["ทดสอบ fallback"]:
+        raise AssertionError(f"expected edge-tts fallback to be called once with the spoken text, got: {calls}")
+    return "edge-tts fallback invoked when JaiTTS (primary) failed, file cleaned up after"
+
+
+def check_tts_cache_hit_skips_regeneration():
+    """A second speak() call with identical text+voice must be served from TTS_CACHE_DIR
+    instead of calling generate_speech_fallback (JaiTTS, primary) again — this is what makes
+    repeat phrases (e.g. the CONFIRM_GATED question/cancel strings) skip regeneration on the
+    2nd+ occurrence."""
+    orig_cache_dir = fw.TTS_CACHE_DIR
+    orig_fallback = fw.generate_speech_fallback
+    fw.TTS_CACHE_DIR = tempfile.mkdtemp()
+    calls = []
+
+    def fake_generate_speech_fallback(text):
+        calls.append(text)
+        with open(fw.TEMP_AUDIO_FILE_FALLBACK, "wb") as f:
+            f.write(b"\0")
+        return True
+
+    fw.generate_speech_fallback = fake_generate_speech_fallback
     try:
         fw.speak("แคชทดสอบ")
         fw.speak("แคชทดสอบ")
     finally:
-        fw.generate_speech = orig_generate
+        fw.generate_speech_fallback = orig_fallback
         shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
         fw.TTS_CACHE_DIR = orig_cache_dir
 
     if calls != ["แคชทดสอบ"]:
-        raise AssertionError(f"expected generate_speech called once (2nd call should hit cache), got: {calls}")
-    return "2nd identical speak() call served from cache, generate_speech called once"
+        raise AssertionError(f"expected generate_speech_fallback called once (2nd call should hit cache), got: {calls}")
+    return "2nd identical speak() call served from cache, generate_speech_fallback called once"
 
 
 def check_mic_listening_default_clear():
@@ -935,6 +937,65 @@ def check_ask_ollama_slow_warning():
     if out["tool_calls"] is not None:
         raise AssertionError(f"expected tool_calls=None on the fallback path, got: {out['tool_calls']!r}")
     return f"warned once after ~{fake_clock[0]:.0f}s simulated elapsed"
+
+
+class _FakeSttRecognizer:
+    """Stands in for sr.Recognizer -- only implements the two methods _recognize_speech calls."""
+    def __init__(self, cloud_result="ok", cloud_raises=None, free_result="fallback ok", free_raises=None):
+        self.cloud_result, self.cloud_raises = cloud_result, cloud_raises
+        self.free_result, self.free_raises = free_result, free_raises
+
+    def recognize_google_cloud(self, audio, credentials_json_path=None, language_code=None):
+        if self.cloud_raises:
+            raise self.cloud_raises
+        return self.cloud_result
+
+    def recognize_google(self, audio, language=None):
+        if self.free_raises:
+            raise self.free_raises
+        return self.free_result
+
+
+def check_recognize_speech_cloud_success():
+    r = _FakeSttRecognizer(cloud_result="เช็คซีพียูให้หน่อย")
+    text = fw._recognize_speech(r, object())
+    if text != "เช็คซีพียูให้หน่อย":
+        raise AssertionError(f"expected the Cloud result verbatim, got: {text!r}")
+    return text
+
+
+def check_recognize_speech_unclear_no_fallback_attempted():
+    """UnknownValueError means the Cloud API understood the request but couldn't make out the
+    speech -- not a service failure, so falling back to the free API would just fail the same
+    way on the same audio. Must return None without even trying the fallback."""
+    calls = []
+    r = _FakeSttRecognizer(cloud_raises=fw.sr.UnknownValueError())
+    r.recognize_google = lambda *a, **kw: calls.append(1) or "should not be reached"
+    text = fw._recognize_speech(r, object())
+    if text is not None:
+        raise AssertionError(f"expected None on unclear speech, got: {text!r}")
+    if calls:
+        raise AssertionError("fallback should not be attempted on UnknownValueError")
+    return "None returned, fallback not attempted"
+
+
+def check_recognize_speech_falls_back_on_request_error():
+    """2026-07-04: Cloud STT can fail for reasons the free endpoint doesn't share (billing
+    exhausted, quota, API disabled, revoked service account) -- must fall back instead of going
+    silent."""
+    r = _FakeSttRecognizer(cloud_raises=fw.sr.RequestError("quota exceeded"), free_result="ยืนยันครับ")
+    text = fw._recognize_speech(r, object())
+    if text != "ยืนยันครับ":
+        raise AssertionError(f"expected the free-API fallback result, got: {text!r}")
+    return text
+
+
+def check_recognize_speech_unclear_on_fallback_too():
+    r = _FakeSttRecognizer(cloud_raises=fw.sr.RequestError("quota exceeded"), free_raises=fw.sr.UnknownValueError())
+    text = fw._recognize_speech(r, object())
+    if text is not None:
+        raise AssertionError(f"expected None when both paths can't make out speech, got: {text!r}")
+    return "None returned, both paths tried"
 
 
 def check_dispatch_to_hermes_polls_result():
@@ -1292,6 +1353,10 @@ check("pack_args", check_pack_args)
 check("run_native_tools", check_run_native_tools)
 check("native_tool_calling(live)", check_native_tool_calling_live)
 check("ask_ollama(slow_warning)", check_ask_ollama_slow_warning)
+check("recognize_speech(cloud success)", check_recognize_speech_cloud_success)
+check("recognize_speech(unclear, no fallback attempted)", check_recognize_speech_unclear_no_fallback_attempted)
+check("recognize_speech(falls back on request error)", check_recognize_speech_falls_back_on_request_error)
+check("recognize_speech(unclear on fallback too)", check_recognize_speech_unclear_on_fallback_too)
 check("confirm_words_added", check_confirm_words_added)
 check("confirm_particle_stripping", check_confirm_particle_stripping)
 check("is_confirm", check_is_confirm)
@@ -1300,7 +1365,7 @@ check("tv_verify_speaks_on_failure", check_tv_verify_speaks_on_failure)
 check("search_summary_female_ending_live", check_search_summary_female_ending_live)
 check("audio_serialization(speak+speak)", check_audio_serialization)
 check("generate_speech_fallback(live, JaiTTS)", check_generate_speech_fallback_live)
-check("speak_uses_fallback_when_edge_tts_fails", check_speak_uses_fallback_when_edge_tts_fails)
+check("speak_falls_back_to_edge_tts_when_jaitts_fails", check_speak_falls_back_to_edge_tts_when_jaitts_fails)
 check("tts_cache_hit_skips_regeneration", check_tts_cache_hit_skips_regeneration)
 check("mic_listening_default", check_mic_listening_default_clear)
 check("migrate_legacy_day_files", check_migrate_legacy_day_files)

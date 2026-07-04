@@ -25,9 +25,30 @@ import yt_dlp
 from datetime import datetime, timedelta
 from ddgs import DDGS
 
+def _load_dotenv():
+    """ponytail: stdlib-only .env loader -- not worth adding python-dotenv as a dependency for
+    parsing a handful of KEY=VALUE lines."""
+    env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+    if not os.path.exists(env_path):
+        return
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip())
+
+_load_dotenv()
+
 # Configuration
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "gemma4:31b-cloud"
+# STT: Google Cloud Speech-to-Text (official, paid-but-cheap) replaces the free/unofficial
+# recognize_google() endpoint below -- 2026-07-04, see listen_mic(). Credentials borrowed from
+# the existing craftbike_bot GCP project (CEO confirmed it's unused for anything else, API
+# enabled on that project specifically for this).
+GOOGLE_CLOUD_CREDS_PATH = os.environ.get("GOOGLE_CLOUD_CREDS_PATH", r"D:\craftbike_bot\credentials.json")
 TEMP_AUDIO_FILE = "friday_temp_response.mp3"
 TEMP_AUDIO_FILE_FALLBACK = "friday_temp_response_fallback.wav"
 VOICE_NAME = "th-TH-PremwadeeNeural"  # Microsoft Premwadee (Thai Female - Friday)
@@ -57,7 +78,6 @@ MAILBOX_INBOX_HERMES_DIR = os.path.join(MAILBOX_DIR, "inbox", "hermes")
 # repeat skips the TTS network call entirely. Dynamic phrases (app names, search queries) just
 # never hit the cache; no downside for them. Resolved from __file__ so cwd doesn't matter.
 TTS_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tts_cache")
-TESTING_LOCAL_VOICE_ONLY = False  # ponytail: temporary (2026-07-02) — set True to force local fallback voice for testing
 
 # Offline fallback TTS -- JaiTTS (F5-TTS-based, native Thai-English code-switching), replaces
 # VachanaTTS 2026-07-04 after a live A/B: same-quality-or-better on code-switched sentences and
@@ -144,10 +164,12 @@ def generate_speech_fallback(text):
         return False
 
 def speak(text, voice=None):
-    """Print the text and play it as voice, then clean up the file. voice overrides VOICE_NAME
-    for this call only (e.g. the male "Jarvis" cloud-slow warning) — the edge-tts path only,
-    the offline fallback engine always speaks as itself."""
+    """Print the text and play it as voice, then clean up the file. JaiTTS (local, GPU) is the
+    primary voice as of 2026-07-04 — edge-tts is now only the fallback, and only reachable via
+    an explicit voice= override (e.g. the male "Jarvis" cloud-slow warning), since JaiTTS clones
+    a single fixed reference voice and can't produce a second one on demand."""
     print(f"👩‍💼 Friday: {text}")
+    explicit_voice = voice is not None
     voice = voice or VOICE_NAME
 
     # Filter emojis to prevent Siri-like emoji spelling
@@ -174,33 +196,32 @@ def speak(text, voice=None):
 
         if cached_file:
             audio_file = cached_file
-        # 1. Generate speech file with retry; fall back to local offline TTS (B3, see
-        # generate_speech_fallback()) if edge-tts is completely unreachable rather than going
-        # silent with no explanation.
-        elif TESTING_LOCAL_VOICE_ONLY:
-            # ponytail: temporary manual-test toggle (2026-07-02) — CEO wants to hear the
-            # local fallback voice in real conversation, not just canned samples. Skips
-            # edge-tts entirely. Flip back to False when done (also: check_audio_serialization
-            # in test_tools.py mocks generate_speech directly and will fail while this is on,
-            # since it never gets called — that's expected, not a real regression).
-            if not generate_speech_fallback(clean_text):
-                print("❌ Local TTS failed — Friday cannot speak this turn.")
-                return
-            audio_file = TEMP_AUDIO_FILE_FALLBACK
-        else:
+        # 1. JaiTTS (local, GPU) is primary since 2026-07-04. edge-tts only runs when a
+        # specific non-default voice was requested (JaiTTS can't do that), or as a fallback
+        # if JaiTTS itself fails (model/GPU error) so Friday never goes fully silent (B3).
+        elif explicit_voice:
             try:
                 success = asyncio.run(generate_speech(clean_text, voice=voice))
             except Exception as e:
                 print(f"❌ Error generating TTS: {e}")
                 success = False
-
             audio_file = TEMP_AUDIO_FILE
             if not success:
-                print("⚠️ Edge-TTS failed after 3 attempts — trying local offline fallback voice.")
-                if generate_speech_fallback(clean_text):
-                    audio_file = TEMP_AUDIO_FILE_FALLBACK
-                else:
-                    print("❌ Fallback TTS also failed — Friday cannot speak this turn.")
+                print("❌ Edge-TTS failed after 3 attempts for the requested voice — Friday cannot speak this turn.")
+                return
+        else:
+            if generate_speech_fallback(clean_text):
+                audio_file = TEMP_AUDIO_FILE_FALLBACK
+            else:
+                print("⚠️ JaiTTS failed — trying cloud edge-tts instead.")
+                try:
+                    success = asyncio.run(generate_speech(clean_text, voice=voice))
+                except Exception as e:
+                    print(f"❌ Error generating TTS: {e}")
+                    success = False
+                audio_file = TEMP_AUDIO_FILE
+                if not success:
+                    print("❌ Edge-TTS fallback also failed — Friday cannot speak this turn.")
                     return
 
         # 1b. Persist freshly generated audio to the cache for next time (best-effort — a cache
@@ -293,6 +314,33 @@ def log_to_vault(role, text):
     with open(_current_session_path, "a", encoding="utf-8") as f:
         f.write(f"### {datetime.now().strftime('%H:%M:%S')} — {role}\n{text}\n\n")
 
+def _recognize_speech(r, audio):
+    """Transcribe with Google Cloud Speech-to-Text (2026-07-04 swap, see listen_mic), falling
+    back to the old free recognize_google() endpoint if the Cloud call fails outright --
+    billing/credit exhausted, quota, API disabled, service account revoked -- rather than going
+    silent. ponytail: known ceiling, the fallback path has the exact lower accuracy this swap
+    was meant to fix, but a degraded answer beats no answer. Returns the recognized text, or
+    None if speech was unclear on whichever path answered (not a hard failure). Raises on a
+    genuine hard failure (e.g. no internet at all)."""
+    try:
+        text = r.recognize_google_cloud(
+            audio, credentials_json_path=GOOGLE_CLOUD_CREDS_PATH, language_code="th-TH"
+        )
+        print(f"👤 คุณพูดว่า: {text}")
+        return text
+    except sr.UnknownValueError:
+        print("👩‍💼 Friday: ขอโทษค่ะ ฉันฟังไม่ชัด ลองพูดใหม่อีกทีนะค่ะ")
+        return None
+    except sr.RequestError as e:
+        print(f"⚠️ Google Cloud STT ใช้ไม่ได้ ({e}) — ลอง fallback ไปที่ recognize_google ฟรีแทน")
+        try:
+            text = r.recognize_google(audio, language="th-TH")
+            print(f"👤 คุณพูดว่า (fallback): {text}")
+            return text
+        except sr.UnknownValueError:
+            print("👩‍💼 Friday: ขอโทษค่ะ ฉันฟังไม่ชัด ลองพูดใหม่อีกทีนะค่ะ")
+            return None
+
 def listen_mic(r):
     """Listen to microphone and transcribe to Thai text. Returns the recognized text, or None
     if nothing usable was heard (timeout, unclear speech, or a hard STT failure)."""
@@ -316,10 +364,7 @@ def listen_mic(r):
         if audio is not None:
             try:
                 print("🔊 Friday: กำลังแปลงเสียงพูด...")
-                text = r.recognize_google(audio, language="th-TH")
-                print(f"👤 คุณพูดว่า: {text}")
-            except sr.UnknownValueError:
-                print("👩‍💼 Friday: ขอโทษค่ะ ฉันฟังไม่ชัด ลองพูดใหม่อีกทีนะค่ะ")
+                text = _recognize_speech(r, audio)
             except Exception as e:
                 print(f"❌ Error in STT: {e}")
                 hard_failure = True
