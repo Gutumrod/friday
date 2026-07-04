@@ -1635,6 +1635,13 @@ def main():
     r.dynamic_energy_threshold = False
     print("🔊 Friday: ปรับแต่งไมโครโฟนเสร็จสิ้นค่ะ")
 
+    # Warm up JaiTTS (model load + first CUDA call) here, not mid-conversation. The greeting
+    # right below is cache-hit every session (identical text), so it never touches the engine
+    # -- without this, the *next* line (first real, uncached reply) eats the ~13s one-time
+    # cold-start cost live, which felt like a hang (2026-07-04 live test).
+    print("🔊 Friday: กำลังเตรียมระบบเสียงในเครื่อง (ครั้งแรกของเซสชันนี้)...")
+    generate_speech_fallback("กำลังเตรียมระบบเสียง")
+
     system_prompt = build_system_prompt()
     history = [{"role": "system", "content": system_prompt}]
     
