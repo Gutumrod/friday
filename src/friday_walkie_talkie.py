@@ -133,6 +133,69 @@ async def generate_speech(text, voice=None):
 
 _jaitts_engine = None
 
+_THAI_DIGIT_WORDS = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"]
+_THAI_MONTH_NAMES = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+                     "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"]
+
+def _thai_number_words(n):
+    """Spell out a non-negative integer as Thai place-value words (e.g. 21 -> 'ยี่สิบเอ็ด',
+    2026 -> 'สองพันยี่สิบหก'). ponytail: covers the 1-4 digit range Friday actually speaks
+    (hour/minute/day/year) — not a general-purpose numeral formatter."""
+    if n == 0:
+        return _THAI_DIGIT_WORDS[0]
+    s = str(n)
+    length = len(s)
+    words = []
+    for i, ch in enumerate(s):
+        digit = int(ch)
+        place = length - i - 1
+        if digit == 0:
+            continue
+        if place == 0:
+            words.append("เอ็ด" if digit == 1 and length > 1 else _THAI_DIGIT_WORDS[digit])
+        elif place == 1:
+            words.append("สิบ" if digit == 1 else ("ยี่สิบ" if digit == 2 else _THAI_DIGIT_WORDS[digit] + "สิบ"))
+        elif place == 2:
+            words.append(_THAI_DIGIT_WORDS[digit] + "ร้อย")
+        elif place == 3:
+            words.append(_THAI_DIGIT_WORDS[digit] + "พัน")
+        elif place == 4:
+            words.append(_THAI_DIGIT_WORDS[digit] + "หมื่น")
+        elif place == 5:
+            words.append(_THAI_DIGIT_WORDS[digit] + "แสน")
+        else:
+            words.append(_THAI_DIGIT_WORDS[digit] + "ล้าน")
+    return "".join(words)
+
+_TIME_RE = re.compile(r'((?:เวลา|ตอน)\s*)?(\d{1,2}):(\d{2})(\s*น\.?)?')
+_DATE_RE = re.compile(r'(วันที่\s*)?(\d{1,2})/(\d{1,2})/(\d{4})')
+
+def _normalize_numbers_for_tts(text):
+    """JaiTTS (unlike edge-tts) mispronounces raw digital time/date notation -- confirmed via
+    live A/B test 2026-07-04: 'ตอนนี้เวลา 08:21 น. วันที่ 04/07/2026 ค่ะ' came out เพี้ยน, the
+    same sentence spelled out in Thai words came through clear. Only applied on the JaiTTS
+    path; edge-tts handles the raw formats fine so it's untouched. Swallows a literal
+    'เวลา'/'ตอน'/'วันที่' immediately before the digits (both real callers -- tool_get_time and
+    set_alarm's confirmation -- already write one) and re-glues it with no gap, matching the
+    exact wording confirmed clear; a bare digit pattern with no such word still works, it just
+    won't have a leading word to re-glue."""
+    def _time_sub(m):
+        hour, minute = int(m.group(2)), int(m.group(3))
+        words = f"{_thai_number_words(hour)}นาฬิกา"
+        if minute:
+            words += f"{_thai_number_words(minute)}นาที"
+        prefix = m.group(1).strip() if m.group(1) else ""
+        return f"{prefix}{words}"
+
+    def _date_sub(m):
+        day, month, year = int(m.group(2)), int(m.group(3)), int(m.group(4))
+        month_name = _THAI_MONTH_NAMES[month] if 1 <= month <= 12 else str(month)
+        return f"วันที่{_thai_number_words(day)} {month_name} {_thai_number_words(year)}"
+
+    text = _DATE_RE.sub(_date_sub, text)
+    text = _TIME_RE.sub(_time_sub, text)
+    return text
+
 def generate_speech_fallback(text):
     """Local, fully-offline TTS used only when edge-tts (cloud) fails all 3 attempts — closes
     B3 (audit, 2026-07-02): before this, Friday just went silent with no fallback at all.
@@ -155,7 +218,7 @@ def generate_speech_fallback(text):
             device = "cuda" if torch.cuda.is_available() else "cpu"
             _jaitts_engine = F5TTS(model="F5TTS_v1_Base", ckpt_file=ckpt, vocab_file=vocab, device=device)
         _jaitts_engine.infer(
-            ref_file=JAITTS_REF_AUDIO, ref_text=JAITTS_REF_TEXT, gen_text=text,
+            ref_file=JAITTS_REF_AUDIO, ref_text=JAITTS_REF_TEXT, gen_text=_normalize_numbers_for_tts(text),
             file_wave=TEMP_AUDIO_FILE_FALLBACK,
         )
         return os.path.exists(TEMP_AUDIO_FILE_FALLBACK) and os.path.getsize(TEMP_AUDIO_FILE_FALLBACK) > 0

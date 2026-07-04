@@ -631,6 +631,24 @@ def check_audio_serialization():
     return "serialized ok (no overlap)"
 
 
+def check_normalize_numbers_for_tts():
+    """JaiTTS mispronounces raw digital time/date notation (confirmed via live A/B test
+    2026-07-04 -- CEO heard 'ตอนนี้เวลา 08:21 น. วันที่ 04/07/2026 ค่ะ' come out เพี้ยน,
+    the spelled-out version clear). _normalize_numbers_for_tts() must convert the exact
+    tool_get_time() output to that confirmed-clear wording."""
+    cases = [
+        ("ตอนนี้เวลา 08:21 น. วันที่ 04/07/2026 ค่ะ",
+         "ตอนนี้เวลาแปดนาฬิกายี่สิบเอ็ดนาที วันที่สี่ กรกฎาคม สองพันยี่สิบหก ค่ะ"),
+        ("ตั้งเวลาไว้ตอน 09:00 แล้วค่ะ", "ตั้งเวลาไว้ตอนเก้านาฬิกา แล้วค่ะ"),
+        ("ห้องเลขที่ 204 อยู่ชั้น 2 ค่ะ", "ห้องเลขที่ 204 อยู่ชั้น 2 ค่ะ"),  # no time/date pattern -- untouched
+    ]
+    for raw, expected in cases:
+        got = fw._normalize_numbers_for_tts(raw)
+        if got != expected:
+            raise AssertionError(f"{raw!r} -> {got!r}, expected {expected!r}")
+    return f"{len(cases)} cases normalized correctly, non-date/time digits left untouched"
+
+
 def check_generate_speech_fallback_live():
     """2026-07-04 — live test of the actual local TTS fallback (JaiTTS, F5-TTS-based), not a
     mock: confirms it produces real playable audio without any network call to edge-tts,
@@ -1364,6 +1382,7 @@ check("tv_verify_silent_on_success", check_tv_verify_silent_on_success)
 check("tv_verify_speaks_on_failure", check_tv_verify_speaks_on_failure)
 check("search_summary_female_ending_live", check_search_summary_female_ending_live)
 check("audio_serialization(speak+speak)", check_audio_serialization)
+check("normalize_numbers_for_tts", check_normalize_numbers_for_tts)
 check("generate_speech_fallback(live, JaiTTS)", check_generate_speech_fallback_live)
 check("speak_falls_back_to_edge_tts_when_jaitts_fails", check_speak_falls_back_to_edge_tts_when_jaitts_fails)
 check("tts_cache_hit_skips_regeneration", check_tts_cache_hit_skips_regeneration)
