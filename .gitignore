@@ -1,8 +1,10 @@
 __pycache__/
 *.pyc
 src/tts_cache/
-voices/
+voices/*
+!voices/jaitts_reference.wav
 vault/
 backups/
 .env
 *.env
+friday_temp_response*
