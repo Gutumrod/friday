@@ -18,6 +18,7 @@ import threading
 import base64
 import hashlib
 import uuid
+import winsound
 import cv2
 from pywebostv.connection import WebOSClient
 from pywebostv.controls import SystemControl, MediaControl, ApplicationControl, InputControl
@@ -418,6 +419,9 @@ def listen_mic(r):
     audio = None
     text = None
     hard_failure = False
+    # Cue tone so the user knows exactly when to start talking. Blocking call, played before
+    # the mic opens (not after) so its own sound can't bleed into r.listen()'s capture.
+    winsound.Beep(880, 150)
     with sr.Microphone(device_index=DEVICE_INDEX) as source:
         print("\n🎤 Friday: กำลังฟัง... (พูดคำสั่งของคุณได้เลยค่ะ)")
         mic_listening.set()
