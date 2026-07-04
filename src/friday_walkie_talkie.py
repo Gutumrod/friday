@@ -131,6 +131,13 @@ async def generate_speech(text, voice=None):
         await asyncio.sleep(1)
     return False
 
+# F5-TTS diffusion solver steps -- default is 32, trading speed for quality. 2026-07-04:
+# JaiTTS-as-primary measured 1-1.5s slower per reply than edge-tts at nfe_step=32 (3.16s on
+# a typical sentence); dropped to 8 after CEO A/B'd 32/16/8 by ear and confirmed 8 still
+# sounds clear (0.65s, faster than edge-tts). ponytail: raise this back toward 16-32 if a
+# future voice/sentence sounds off at 8 -- quality ceiling traded for latency here, not free.
+JAITTS_NFE_STEP = 8
+
 _jaitts_engine = None
 
 _THAI_DIGIT_WORDS = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"]
@@ -219,7 +226,7 @@ def generate_speech_fallback(text):
             _jaitts_engine = F5TTS(model="F5TTS_v1_Base", ckpt_file=ckpt, vocab_file=vocab, device=device)
         _jaitts_engine.infer(
             ref_file=JAITTS_REF_AUDIO, ref_text=JAITTS_REF_TEXT, gen_text=_normalize_numbers_for_tts(text),
-            file_wave=TEMP_AUDIO_FILE_FALLBACK,
+            file_wave=TEMP_AUDIO_FILE_FALLBACK, nfe_step=JAITTS_NFE_STEP,
         )
         return os.path.exists(TEMP_AUDIO_FILE_FALLBACK) and os.path.getsize(TEMP_AUDIO_FILE_FALLBACK) > 0
     except Exception as e:
