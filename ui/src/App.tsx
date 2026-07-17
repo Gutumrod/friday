@@ -64,6 +64,10 @@ const App: React.FC = () => {
       const now = new Date();
       const timeStr = now.toTimeString().split(' ')[0];
       const logId = `log-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+      const confirmationId = data.confirmation_id || data.id;
+      const toolName = data.tool_name || data.toolName;
+      const toolArgs = data.args || data.arguments || {};
+      const toolQuestion = data.question || data.description || `Confirm ${toolName}`;
 
       switch (type) {
         case 'info':
@@ -80,10 +84,20 @@ const App: React.FC = () => {
           break;
         case 'thinking_started':
           setCurrentState('thinking');
+          setActivityLogs(prev => [...prev, { id: logId, type: 'thinking', message: "Friday core is thinking...", timestamp: timeStr }]);
           break;
         case 'llm_response':
           setCurrentState('speaking');
-          setActivityLogs(prev => [...prev, { id: logId, type: 'llm', message: data.text, timestamp: timeStr }]);
+          setActivityLogs(prev => [...prev, { id: logId, type: 'llm', message: data.text || data.content || '', timestamp: timeStr }]);
+          break;
+        case 'tool_requested':
+          setActivityLogs(prev => [...prev, {
+            id: logId,
+            type: 'tool',
+            message: "Friday requested tool execution.",
+            timestamp: timeStr,
+            meta: JSON.stringify(data.tool_calls || data.toolCalls || [])
+          }]);
           break;
         case 'tts_started':
           setCurrentState('speaking');
@@ -94,26 +108,34 @@ const App: React.FC = () => {
           break;
         case 'confirm_required':
           setCurrentState('thinking');
-          setActiveConfirmRequest(data);
+          setActiveConfirmRequest({
+            id: confirmationId,
+            toolName,
+            arguments: toolArgs,
+            description: toolQuestion,
+          });
           setActivityLogs(prev => [...prev, { 
             id: logId, 
             type: 'confirm', 
-            message: `Tool action [${data.toolName}] requires explicit authorization.`, 
+            message: `Tool action [${toolName}] requires explicit authorization.`, 
             timestamp: timeStr,
-            meta: JSON.stringify(data.arguments)
+            meta: JSON.stringify(toolArgs)
           }]);
           break;
         case 'tool_executed':
+          setCurrentState('idle');
           setActivityLogs(prev => [...prev, { 
             id: logId, 
             type: 'tool', 
-            message: `Tool execution [${data.id}] finished with status: ${data.status}`, 
+            message: data.cancelled
+              ? `Tool execution [${toolName || data.id || 'unknown'}] was rejected.`
+              : `Tool execution [${toolName || data.id || 'unknown'}] finished.`, 
             timestamp: timeStr,
-            meta: data.result 
+            meta: data.output || data.result
           }]);
           break;
         case 'hermes_notified':
-          setActivityLogs(prev => [...prev, { id: logId, type: 'info', message: data.message, timestamp: timeStr }]);
+          setActivityLogs(prev => [...prev, { id: logId, type: 'info', message: data.message || data.output || 'Hermes notification emitted.', timestamp: timeStr }]);
           break;
         case 'system_load':
           setSystemStatus(prev => ({
@@ -124,7 +146,7 @@ const App: React.FC = () => {
           }));
           break;
         case 'error':
-          setActivityLogs(prev => [...prev, { id: logId, type: 'error', message: `Error: ${data.message || data}`, timestamp: timeStr }]);
+          setActivityLogs(prev => [...prev, { id: logId, type: 'error', message: `Error: ${data.message || data.error || data}`, timestamp: timeStr }]);
           break;
         default:
           break;

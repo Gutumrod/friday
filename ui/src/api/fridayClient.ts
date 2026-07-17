@@ -1,12 +1,11 @@
 /**
  * Friday API Client
  * 
- * NOTE: [PHASE 3] CURRENTLY RUNNING IN MOCK MODE.
- * This file contains mock implementations of all APIs and WebSockets.
- * To connect to the real python backend service in Phase 4, toggle the USE_MOCK flag to false.
+ * NOTE: Phase 4 connects this client to the real Friday FastAPI backend.
+ * Mock implementations remain in this file only as a local fallback switch.
  */
 
-export const USE_MOCK = true; // TOGGLE THIS FLAG IN PHASE 4 TO CONNECT TO REAL BACKEND
+export const USE_MOCK = false;
 
 export interface SystemStatus {
   online: boolean;
@@ -45,6 +44,24 @@ export interface ToolCallRequest {
 
 export type EventCallback = (eventType: string, data: any) => void;
 
+interface BackendStatus {
+  status?: string;
+  service?: string;
+  model?: string;
+  voice_running?: boolean;
+  pending_confirmations?: number;
+  tool_count?: number;
+}
+
+interface BackendEvent {
+  id?: string;
+  type?: string;
+  created_at?: string;
+  payload?: Record<string, any>;
+  data?: Record<string, any>;
+  events?: BackendEvent[];
+}
+
 class FridayClient {
   private wsListeners: Set<EventCallback> = new Set();
   private mockInterval: number | null = null;
@@ -74,9 +91,23 @@ class FridayClient {
       };
     }
     
-    // Phase 4 Backend Integration:
     const res = await fetch('/api/status');
-    return res.json();
+    if (!res.ok) {
+      throw new Error(`GET /api/status failed: ${res.status}`);
+    }
+    const data: BackendStatus = await res.json();
+    return {
+      online: data.status === 'ok',
+      model: data.model || 'Unknown',
+      micConnected: false,
+      sttEngine: 'Google STT',
+      ttsEngine: 'JaiTTS',
+      hermesConnected: true,
+      networkLatency: 0,
+      voiceLoopActive: Boolean(data.voice_running),
+      cpuUsage: 0,
+      memoryUsage: 0,
+    };
   }
 
   async getMemoryFacts(): Promise<MemoryFact[]> {
@@ -91,7 +122,14 @@ class FridayClient {
     }
 
     const res = await fetch('/api/memory/facts');
-    return res.json();
+    if (!res.ok) {
+      throw new Error(`GET /api/memory/facts failed: ${res.status}`);
+    }
+    const data: { facts?: string | MemoryFact[] } = await res.json();
+    if (Array.isArray(data.facts)) {
+      return data.facts;
+    }
+    return this.parseFactsMarkdown(data.facts || '');
   }
 
   async getActivityLogs(): Promise<ActivityLogItem[]> {
@@ -105,7 +143,11 @@ class FridayClient {
     }
 
     const res = await fetch('/api/history/latest');
-    return res.json();
+    if (!res.ok) {
+      throw new Error(`GET /api/history/latest failed: ${res.status}`);
+    }
+    const data: { path?: string | null; content?: string } = await res.json();
+    return this.parseHistoryMarkdown(data.content || '', data.path || undefined);
   }
 
   async sendCommand(text: string): Promise<string> {
@@ -148,10 +190,13 @@ class FridayClient {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: text })
+      body: JSON.stringify({ message: text })
     });
+    if (!res.ok) {
+      throw new Error(`POST /api/chat failed: ${res.status}`);
+    }
     const data = await res.json();
-    return data.response;
+    return data.reply || '';
   }
 
   async confirmTool(requestId: string, confirmed: boolean): Promise<boolean> {
@@ -171,10 +216,13 @@ class FridayClient {
     const res = await fetch('/api/tool/confirm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: requestId, confirmed })
+      body: JSON.stringify({ confirmation_id: requestId, confirm: confirmed })
     });
+    if (!res.ok) {
+      throw new Error(`POST /api/tool/confirm failed: ${res.status}`);
+    }
     const data = await res.json();
-    return data.success;
+    return typeof data.executed === 'boolean' ? data.executed : true;
   }
 
   async toggleVoiceLoop(active: boolean): Promise<boolean> {
@@ -215,14 +263,13 @@ class FridayClient {
       };
     }
 
-    // Phase 4 Backend Integration:
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
     ws.onopen = onOpen;
     ws.onclose = onClose;
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
-      this.triggerEvent(parsed.type, parsed.data);
+      this.handleBackendEvent(parsed);
     };
     return ws;
   }
@@ -242,6 +289,64 @@ class FridayClient {
       } catch (err) {
         console.error("Error in WS Listener: ", err);
       }
+    });
+  }
+
+  private handleBackendEvent(event: BackendEvent) {
+    if (event.type === 'snapshot') {
+      (event.events || []).forEach((snapshotEvent) => this.handleBackendEvent(snapshotEvent));
+      return;
+    }
+    if (!event.type) return;
+    this.triggerEvent(event.type, event.payload ?? event.data ?? {});
+  }
+
+  private parseFactsMarkdown(markdown: string): MemoryFact[] {
+    const lines = markdown.split(/\r?\n/);
+    const facts: MemoryFact[] = [];
+    let category = 'Memory';
+    let buffer: string[] = [];
+
+    const flush = () => {
+      const content = buffer.join('\n').trim();
+      if (!content) return;
+      facts.push({
+        id: `fact-${facts.length + 1}`,
+        category,
+        content,
+        timestamp: new Date().toISOString().replace('T', ' ').slice(0, 19),
+      });
+      buffer = [];
+    };
+
+    for (const line of lines) {
+      if (line.startsWith('## ')) {
+        flush();
+        category = line.replace(/^##\s+/, '').trim() || 'Memory';
+      } else if (!line.startsWith('# ')) {
+        buffer.push(line);
+      }
+    }
+    flush();
+    return facts;
+  }
+
+  private parseHistoryMarkdown(markdown: string, path?: string): ActivityLogItem[] {
+    if (!markdown.trim()) {
+      return [];
+    }
+    const entries = markdown.split(/^###\s+/m).filter(Boolean);
+    return entries.map((entry, index) => {
+      const [header = '', ...bodyLines] = entry.split(/\r?\n/);
+      const timeMatch = header.match(/(\d{2}:\d{2}:\d{2})/);
+      const role = header.includes('นาย') || header.toLowerCase().includes('user') ? 'info' : 'llm';
+      return {
+        id: `history-${index}`,
+        type: role,
+        message: bodyLines.join('\n').trim() || header.trim(),
+        timestamp: timeMatch?.[1] || '--:--:--',
+        meta: path,
+      };
     });
   }
 
