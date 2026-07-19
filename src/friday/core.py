@@ -1041,11 +1041,24 @@ def tool_look_camera(args):
 # LG webOS TV control (2026-07-03 live test — see notes/lg-tv-control-live-test-2026-07-03.md
 # for the full trial-and-error log, incl. the two dead ends: IME insertText doesn't reach
 # YouTube's own on-screen keyboard, and Chromecast/DIAL isn't supported on this TV at all).
+def _tv_connection_failure_text():
+    return get_phrase("tv_error", "tv_error_network_check")["text"]
+
+def _raise_if_tv_unreachable():
+    """Fail fast before pywebostv/ws4py can sit in a long connect path when the TV IP is stale
+    or the TV is offline."""
+    try:
+        with socket.create_connection((TV_IP, 3001), timeout=TV_CONNECT_TIMEOUT):
+            return
+    except OSError as e:
+        raise ConnectionError(_tv_connection_failure_text()) from e
+
 def _tv_connect():
     """Connects + pairs with the TV using the already-negotiated TV_CLIENT_KEY — no fresh
     pairing prompt needed. ws4py's connect() has no built-in timeout, so a command sent while
     the TV is off/unreachable would otherwise hang Friday's whole voice loop instead of
     failing fast; the socket default timeout wrapper here is what actually bounds it."""
+    _raise_if_tv_unreachable()
     client = WebOSClient(TV_IP, secure=True)
     orig_timeout = socket.getdefaulttimeout()
     socket.setdefaulttimeout(TV_CONNECT_TIMEOUT)
@@ -1070,7 +1083,7 @@ def _verify_tv_on():
     try:
         _tv_connect()
     except Exception:
-        msg = "ทีวียังต่อไม่ติดค่ะ ลองเช็คปลั๊กหรือสัญญาณ Wake on LAN อีกทีนะคะ"
+        msg = get_phrase("tv_error", "tv_error_wol_check")["text"]
         speak(msg)
         log_to_vault("assistant", msg)
 
@@ -1092,7 +1105,8 @@ def tool_tv_power(args):
         try:
             client = _tv_connect()
         except Exception as e:
-            return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+            print(f"⚠️ TV connect failed: {e}")
+            return _tv_connection_failure_text()
         SystemControl(client).power_off()
         return "ปิดทีวีให้แล้วค่ะ"
     return f"ฟรายเดย์ไม่เข้าใจคำสั่งทีวีแบบ '{args}' สั่งได้แค่ on/off ค่ะ"
@@ -1106,7 +1120,8 @@ def tool_tv_volume(args):
     try:
         client = _tv_connect()
     except Exception as e:
-        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+        print(f"⚠️ TV connect failed: {e}")
+        return _tv_connection_failure_text()
     media = MediaControl(client)
     if action == "up":
         result = media.volume_up()
@@ -1131,7 +1146,8 @@ def tool_tv_launch_app(args):
     try:
         client = _tv_connect()
     except Exception as e:
-        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+        print(f"⚠️ TV connect failed: {e}")
+        return _tv_connection_failure_text()
     app_ctl = ApplicationControl(client)
     apps = app_ctl.list_apps()
     name_lower = name.lower()
@@ -1171,7 +1187,8 @@ def tool_tv_play_video(args):
     try:
         client = _tv_connect()
     except Exception as e:
-        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+        print(f"⚠️ TV connect failed: {e}")
+        return _tv_connection_failure_text()
 
     inp = InputControl(client)
     inp.connect_input()
@@ -1200,7 +1217,8 @@ def tool_tv_remote_button(args):
     try:
         client = _tv_connect()
     except Exception as e:
-        return f"ต่อทีวีไม่ได้ค่ะ: {e}"
+        print(f"⚠️ TV connect failed: {e}")
+        return _tv_connection_failure_text()
     inp = InputControl(client)
     inp.connect_input()
     getattr(inp, button)()

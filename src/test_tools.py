@@ -522,6 +522,33 @@ def check_tv_verify_speaks_on_failure():
     return spoken[0]
 
 
+def check_tv_connect_preflight_fails_fast():
+    """If the configured TV IP is offline/stale, fail before pywebostv can hang the voice loop."""
+    orig_create_connection, orig_webos = fw.socket.create_connection, fw.WebOSClient
+
+    def timeout_connect(*_args, **_kwargs):
+        raise TimeoutError("simulated TV port timeout")
+
+    class ShouldNotInstantiate:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("WebOSClient should not be constructed when preflight fails")
+
+    fw.socket.create_connection = timeout_connect
+    fw.WebOSClient = ShouldNotInstantiate
+    try:
+        try:
+            fw._tv_connect()
+        except ConnectionError as e:
+            message = str(e)
+        else:
+            raise AssertionError("_tv_connect should fail when preflight cannot reach the TV")
+    finally:
+        fw.socket.create_connection, fw.WebOSClient = orig_create_connection, orig_webos
+    if "ทีวี" not in message or "เครือข่าย" not in message:
+        raise AssertionError(f"expected user-safe TV network phrase, got: {message}")
+    return "offline TV fails before WebOSClient"
+
+
 def check_search_summary_female_ending_live():
     """Live bug 2026-07-03: one search-summary reply ended in 'ครับ' (male) even though Friday
     is a female persona -- the narrow system_stub used only for this summarization pass had no
@@ -1462,6 +1489,7 @@ check("confirm_particle_stripping", check_confirm_particle_stripping)
 check("is_confirm", check_is_confirm)
 check("tv_verify_silent_on_success", check_tv_verify_silent_on_success)
 check("tv_verify_speaks_on_failure", check_tv_verify_speaks_on_failure)
+check("tv_connect_preflight_fails_fast", check_tv_connect_preflight_fails_fast)
 check("search_summary_female_ending_live", check_search_summary_female_ending_live)
 check("audio_serialization(speak+speak)", check_audio_serialization)
 check("normalize_numbers_for_tts", check_normalize_numbers_for_tts)
