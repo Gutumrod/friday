@@ -268,13 +268,28 @@ class FridayClient {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${protocol}//${window.location.host}/ws/events`);
-    ws.onopen = onOpen;
+    let closeRequestedBeforeOpen = false;
+    ws.onopen = () => {
+      if (closeRequestedBeforeOpen) {
+        ws.close();
+        return;
+      }
+      onOpen();
+    };
     ws.onclose = onClose;
     ws.onmessage = (event) => {
       const parsed = JSON.parse(event.data);
       this.handleBackendEvent(parsed);
     };
-    return ws;
+    return {
+      close: () => {
+        if (ws.readyState === WebSocket.CONNECTING) {
+          closeRequestedBeforeOpen = true;
+          return;
+        }
+        ws.close();
+      }
+    };
   }
 
   addEventListener(callback: EventCallback) {

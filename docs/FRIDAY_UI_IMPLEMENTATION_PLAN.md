@@ -193,7 +193,7 @@ Implementation status:
 
 ## Phase 3: Friday UI Dashboard
 
-Status: done for v1 scaffold, browser verification passed with minor console warning
+Status: done for v1 scaffold, browser verification passed
 
 เป้าหมาย: ทำ local web dashboard สำหรับ Friday UI
 
@@ -253,7 +253,7 @@ Implementation status:
 - `ui/src/api/fridayClient.ts` uses real backend calls by default with `USE_MOCK = false`
 - `ToolConfirmModal` is wired to `/api/tool/confirm`
 - Browser verification captured screenshot at runtime path `output/playwright/friday-ui-live.png`
-- Minor observed warning: initial browser console reported one transient WebSocket connection warning to `ws://127.0.0.1:3000/ws/events`; direct API WebSocket and Vite proxy WebSocket both returned `snapshot` in explicit probes, and no page errors were observed
+- Initial transient browser WebSocket warning was resolved by making the client close wrapper defer cleanup while the socket is still connecting. Latest browser pass shows only normal Vite/React dev console messages and no page errors.
 - Remaining work here is polish and sustained-use tightening, not more mock UI
 
 ## Phase 4: เชื่อมของจริงทีละส่วน

@@ -108,7 +108,10 @@ Friday UI plan:
   - `Reject Action` closed modal
   - no page errors
   - screenshot saved at runtime path `output/playwright/friday-ui-live.png`
-  - observed one transient console warning for `ws://127.0.0.1:3000/ws/events`, but explicit direct and proxy WebSocket probes both returned snapshot
+  - initial pass observed one transient console warning for `ws://127.0.0.1:3000/ws/events`
+  - root cause was React `StrictMode` cleanup closing a WebSocket while it was still connecting
+  - fixed `fridayClient.connectWebSocket()` so cleanup during `CONNECTING` defers close until `onopen`
+  - rerun browser pass showed no WebSocket warning and no page errors
 
 Known warnings เดิม:
 
@@ -129,5 +132,5 @@ Known warnings เดิม:
 1. Collect 10-20 real spoken turns for voice latency Phase 0/1 metrics
 2. TV/YouTube debug remains blocked on finding the real current LG TV IP
 3. UI polish follow-up:
-   - investigate whether the one transient browser WebSocket warning is a harmless initial race or needs reconnect-state smoothing
    - consider adding a small visible connection state for backend WebSocket health separate from Vite HMR
+   - do a longer manual dashboard session after real voice baseline collection
