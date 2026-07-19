@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 src/tts_cache/
+src/voices/
 voices/*
 !voices/jaitts_reference.wav
 vault/
