@@ -48,6 +48,8 @@ from friday.config import (
     DISPATCH_TO_HERMES_POLL_INTERVAL,
     MAILBOX_INBOX_HERMES_DIR,
     TTS_CACHE_DIR,
+    LATENCY_LOG_DIR,
+    PHRASE_AUDIO_DIR,
     JAITTS_REPO,
     VOICES_DIR,
     JAITTS_REF_AUDIO,
@@ -57,8 +59,10 @@ from friday.config import (
     HISTORY_DIR,
     FIRE_REMINDER_SCRIPT,
 )
+from friday import latency as _latency
 from friday import llm as _llm
 from friday import memory as _memory
+from friday.phrases import get_phrase, iter_phrases
 
 # Initialize Pygame Mixer for playing audio
 pygame.mixer.init()
@@ -197,6 +201,82 @@ def generate_speech_fallback(text):
         print(f"⚠️ Fallback TTS failed: {e}")
         return False
 
+def warm_up_jaitts_background():
+    """Load JaiTTS after Friday is already audible. Holding AUDIO_LOCK keeps the shared temp
+    WAV and model init from racing a normal speak() call if the first real command arrives
+    while warmup is still running."""
+    def _worker():
+        print("🔊 Friday: กำลังเตรียมระบบเสียงในเครื่องแบบเบื้องหลังค่ะ...")
+        with AUDIO_LOCK:
+            ok = generate_speech_fallback("กำลังเตรียมระบบเสียง")
+            if os.path.exists(TEMP_AUDIO_FILE_FALLBACK):
+                try:
+                    os.remove(TEMP_AUDIO_FILE_FALLBACK)
+                except Exception as e:
+                    print(f"⚠️ Cleanup failed after JaiTTS warmup: {e}")
+        if ok:
+            print("🔊 Friday: เตรียมระบบเสียงในเครื่องเสร็จแล้วค่ะ")
+        else:
+            print("⚠️ Friday: เตรียมระบบเสียงในเครื่องไม่สำเร็จ จะ fallback ตอนพูดจริงค่ะ")
+
+    threading.Thread(target=_worker, daemon=True, name="FridayJaiTTSWarmup").start()
+
+def _phrase_audio_path(phrase):
+    return os.path.join(PHRASE_AUDIO_DIR, phrase["id"] + ".wav")
+
+def ensure_phrase_audio(phrase):
+    os.makedirs(PHRASE_AUDIO_DIR, exist_ok=True)
+    audio_file = _phrase_audio_path(phrase)
+    if os.path.exists(audio_file) and os.path.getsize(audio_file) > 0:
+        return audio_file
+    with AUDIO_LOCK:
+        if os.path.exists(audio_file) and os.path.getsize(audio_file) > 0:
+            return audio_file
+        if not generate_speech_fallback(phrase["text"]):
+            return None
+        shutil.copyfile(TEMP_AUDIO_FILE_FALLBACK, audio_file)
+        try:
+            os.remove(TEMP_AUDIO_FILE_FALLBACK)
+        except OSError:
+            pass
+        return audio_file
+
+def ensure_all_phrase_audio():
+    generated = []
+    for _category, phrase in iter_phrases():
+        audio_file = ensure_phrase_audio(phrase)
+        generated.append((phrase["id"], audio_file is not None))
+    return generated
+
+def speak_phrase(category, phrase_id=None):
+    phrase = get_phrase(category, phrase_id)
+    print(f"👩‍💼 Friday: {phrase['text']}")
+    audio_file = _phrase_audio_path(phrase)
+    if not os.path.exists(audio_file) or os.path.getsize(audio_file) <= 0:
+        audio_file = ensure_phrase_audio(phrase)
+    if not audio_file:
+        speak(phrase["text"])
+        return phrase["text"]
+
+    with _latency.span("speak_wait_for_mic"):
+        while mic_listening.is_set():
+            time.sleep(0.2)
+
+    with AUDIO_LOCK:
+        try:
+            pygame.mixer.music.load(audio_file)
+            _latency.record("phrase_playback_start", phrase_id=phrase["id"], category=category)
+            pygame.mixer.music.play()
+            with _latency.span("playback"):
+                while pygame.mixer.music.get_busy():
+                    time.sleep(0.1)
+            pygame.mixer.music.stop()
+            pygame.mixer.music.unload()
+        except Exception as e:
+            print(f"❌ Error playing phrase audio: {e}")
+            speak(phrase["text"])
+    return phrase["text"]
+
 def speak(text, voice=None):
     """Print the text and play it as voice, then clean up the file. JaiTTS (local, GPU) is the
     primary voice as of 2026-07-04 — edge-tts is now only the fallback, and only reachable via
@@ -213,8 +293,9 @@ def speak(text, voice=None):
 
     # Never talk over a live mic capture (feedback / Friday transcribing her own voice) —
     # wait for the current listen_mic() window to close first.
-    while mic_listening.is_set():
-        time.sleep(0.2)
+    with _latency.span("speak_wait_for_mic"):
+        while mic_listening.is_set():
+            time.sleep(0.2)
 
     # Serialize against any other in-flight speak() call (e.g. a set_timer reminder firing
     # from its background thread) — both share TEMP_AUDIO_FILE and the pygame music channel.
@@ -230,29 +311,36 @@ def speak(text, voice=None):
 
         if cached_file:
             audio_file = cached_file
+            _latency.set_metric("cache_hit", True)
         # 1. JaiTTS (local, GPU) is primary since 2026-07-04. edge-tts only runs when a
         # specific non-default voice was requested (JaiTTS can't do that), or as a fallback
         # if JaiTTS itself fails (model/GPU error) so Friday never goes fully silent (B3).
         elif explicit_voice:
-            try:
-                success = asyncio.run(generate_speech(clean_text, voice=voice))
-            except Exception as e:
-                print(f"❌ Error generating TTS: {e}")
-                success = False
-            audio_file = TEMP_AUDIO_FILE
-            if not success:
-                print("❌ Edge-TTS failed after 3 attempts for the requested voice — Friday cannot speak this turn.")
-                return
-        else:
-            if generate_speech_fallback(clean_text):
-                audio_file = TEMP_AUDIO_FILE_FALLBACK
-            else:
-                print("⚠️ JaiTTS failed — trying cloud edge-tts instead.")
+            _latency.set_metric("cache_hit", False)
+            with _latency.span("tts_generation"):
                 try:
                     success = asyncio.run(generate_speech(clean_text, voice=voice))
                 except Exception as e:
                     print(f"❌ Error generating TTS: {e}")
                     success = False
+            audio_file = TEMP_AUDIO_FILE
+            if not success:
+                print("❌ Edge-TTS failed after 3 attempts for the requested voice — Friday cannot speak this turn.")
+                return
+        else:
+            _latency.set_metric("cache_hit", False)
+            with _latency.span("tts_generation"):
+                primary_success = generate_speech_fallback(clean_text)
+            if primary_success:
+                audio_file = TEMP_AUDIO_FILE_FALLBACK
+            else:
+                print("⚠️ JaiTTS failed — trying cloud edge-tts instead.")
+                with _latency.span("tts_fallback_generation"):
+                    try:
+                        success = asyncio.run(generate_speech(clean_text, voice=voice))
+                    except Exception as e:
+                        print(f"❌ Error generating TTS: {e}")
+                        success = False
                 audio_file = TEMP_AUDIO_FILE
                 if not success:
                     print("❌ Edge-TTS fallback also failed — Friday cannot speak this turn.")
@@ -270,11 +358,21 @@ def speak(text, voice=None):
         # 2. Play using pygame
         try:
             pygame.mixer.music.load(audio_file)
+            first_audio_ms = _latency.milliseconds_since("listen_done")
+            if first_audio_ms is not None:
+                _latency.set_metric("first_audio_latency_ms", first_audio_ms)
+            _latency.record(
+                "playback_start",
+                text_length=len(clean_text),
+                cache_hit=bool(cached_file),
+                explicit_voice=explicit_voice,
+            )
             pygame.mixer.music.play()
 
             # Wait until playback is finished
-            while pygame.mixer.music.get_busy():
-                time.sleep(0.1)
+            with _latency.span("playback"):
+                while pygame.mixer.music.get_busy():
+                    time.sleep(0.1)
 
             # Stop and unload to release lock on the file
             pygame.mixer.music.stop()
@@ -353,11 +451,15 @@ def listen_mic(r):
         print("\n🎤 Friday: กำลังฟัง... (พูดคำสั่งของคุณได้เลยค่ะ)")
         mic_listening.set()
         try:
-            audio = r.listen(source, timeout=10, phrase_time_limit=15)
+            with _latency.span("listen"):
+                audio = r.listen(source, timeout=10, phrase_time_limit=15)
+            _latency.mark("listen_done")
         except sr.WaitTimeoutError:
+            _latency.record("listen_timeout")
             pass
         except Exception as e:
             print(f"❌ Error in STT: {e}")
+            _latency.record("listen_error", error=str(e))
             hard_failure = True
         finally:
             mic_listening.clear()
@@ -365,9 +467,12 @@ def listen_mic(r):
         if audio is not None:
             try:
                 print("🔊 Friday: กำลังแปลงเสียงพูด...")
-                text = _recognize_speech(r, audio)
+                with _latency.span("stt"):
+                    text = _recognize_speech(r, audio)
+                _latency.record("stt_result", recognized=bool(text), text_length=len(text or ""))
             except Exception as e:
                 print(f"❌ Error in STT: {e}")
+                _latency.record("stt_error", error=str(e))
                 hard_failure = True
 
     # mic_listening is guaranteed clear by here (the with-block's finally already ran) — safe
@@ -1453,6 +1558,18 @@ CONFIRM_GATED = {
     },
 }
 
+UNGATED_TOOL_PROGRESS_PHRASES = {
+    # Vision can take a moment and is safe to acknowledge because look_camera never opens the
+    # webcam by itself; open_camera remains confirm-gated.
+    "look_camera": ("working", "working_looking"),
+}
+
+def ungated_tool_names():
+    return sorted(set(TOOLS) - set(CONFIRM_GATED))
+
+def phrase_before_ungated_tool(name):
+    return UNGATED_TOOL_PROGRESS_PHRASES.get(name)
+
 def find_first_gated_tool_call(tool_calls):
     """Scan EVERY tool call the model requested for a confirm-gated one, not just the first —
     same reasoning as the tag-based version this replaces: a gated call anywhere in a
@@ -1484,8 +1601,20 @@ def run_native_tools(tool_calls):
             outputs.append(f"(ไม่รู้จักเครื่องมือ {name})")
             continue
         try:
-            outputs.append(fn(_pack_args(name, tc["function"].get("arguments"))))
+            progress_phrase = phrase_before_ungated_tool(name)
+            if progress_phrase:
+                speak_phrase(*progress_phrase)
+            start = time.perf_counter()
+            result = fn(_pack_args(name, tc["function"].get("arguments")))
+            _latency.record(
+                "tool_result",
+                tool=name,
+                latency_ms=round((time.perf_counter() - start) * 1000, 1),
+                ok=True,
+            )
+            outputs.append(result)
         except Exception as e:
+            _latency.record("tool_result", tool=name, ok=False, error=str(e))
             outputs.append(f"(เครื่องมือ {name} ทำงานผิดพลาด: {e})")
     return " ".join(outputs)
 
@@ -1526,9 +1655,30 @@ def build_system_prompt():
     return system_prompt
 
 def main():
-    # Initialize speech recognizer and calibrate once on startup
+    # Initialize speech recognizer on startup. Calibration runs after the audible greeting so
+    # Friday does not feel frozen before saying hello, but still happens before the first
+    # listen_mic() call.
     r = sr.Recognizer()
     r.pause_threshold = 0.8  # รอเงียบเสียง 0.8 วินาทีก่อนส่ง (ค่า default ของ SpeechRecognition — ปรับลดจาก 1.5s เพื่อลด latency, ถ้าโดนตัดกลางประโยคบ่อยให้ปรับขึ้น)
+
+    system_prompt = build_system_prompt()
+    history = [{"role": "system", "content": system_prompt}]
+    
+    migrate_legacy_day_files()
+    session_number = start_new_session()
+
+    print("=" * 60)
+    print("👩‍💼 Friday Walkie-Talkie Mode: Active 🤖")
+    print(f"LLM Brain: {MODEL_NAME} (Local Ollama)")
+    print(f"Voice Output: {VOICE_NAME} (JaiTTS primary, Edge TTS fallback)")
+    print(f"Session: {session_number} (วันนี้)")
+    print("=" * 60)
+
+    greeting = speak_phrase("greeting", "greeting_hello_short")
+    history.append({"role": "assistant", "content": greeting})
+    log_to_vault("assistant", greeting)
+
+    speak_phrase("startup_status", "startup_checking_mic_voice")
 
     print("🔊 Friday: กำลังวิเคราะห์ระดับเสียงรบกวนรอบข้าง (กรุณาเงียบเสียงสักครู่ค่ะ)...")
     with sr.Microphone(device_index=DEVICE_INDEX) as source:
@@ -1542,116 +1692,125 @@ def main():
     # calibrate ไว้แล้วนิ่ง ไม่ขยับไปมาระหว่างเทิร์น
     r.dynamic_energy_threshold = False
     print("🔊 Friday: ปรับแต่งไมโครโฟนเสร็จสิ้นค่ะ")
-
-    # Warm up JaiTTS (model load + first CUDA call) here, not mid-conversation. The greeting
-    # right below is cache-hit every session (identical text), so it never touches the engine
-    # -- without this, the *next* line (first real, uncached reply) eats the ~13s one-time
-    # cold-start cost live, which felt like a hang (2026-07-04 live test).
-    print("🔊 Friday: กำลังเตรียมระบบเสียงในเครื่อง (ครั้งแรกของเซสชันนี้)...")
-    generate_speech_fallback("กำลังเตรียมระบบเสียง")
-
-    system_prompt = build_system_prompt()
-    history = [{"role": "system", "content": system_prompt}]
-    
-    migrate_legacy_day_files()
-    session_number = start_new_session()
-
-    print("=" * 60)
-    print("👩‍💼 Friday Walkie-Talkie Mode: Active 🤖")
-    print(f"LLM Brain: {MODEL_NAME} (Local Ollama)")
-    print(f"Voice Output: {VOICE_NAME} (Microsoft Edge TTS)")
-    print(f"Session: {session_number} (วันนี้)")
-    print("=" * 60)
-
-    speak("สวัสดีค่ะนาย ฟรายเดย์พร้อมรับคำสั่งแล้วค่ะ")
-    history.append({"role": "assistant", "content": "สวัสดีค่ะนาย ฟรายเดย์พร้อมรับคำสั่งแล้วค่ะ"})
-    log_to_vault("assistant", "สวัสดีค่ะนาย ฟรายเดย์พร้อมรับคำสั่งแล้วค่ะ")
+    speak_phrase("ready", "ready_listening")
+    warm_up_jaitts_background()
 
     pending_confirm = None  # (tool_name, args) awaiting yes/no confirmation, or None
 
     while True:
-        # 1. Listen
-        user_input = listen_mic(r)
-        if not user_input:
-            continue
-
-        # Check for hardcoded shutdown commands (fallback)
-        if user_input.strip() in ["จบการทำงาน", "ปิดเครื่อง", "ลาก่อน", "บ๊ายบาย", "บาย"]:
-            speak("รับทราบค่ะนาย ปิดระบบการทำงานของฟรายเดย์แล้วค่ะ")
-            log_to_vault("user", user_input)
-            log_to_vault("assistant", "รับทราบค่ะนาย ปิดระบบการทำงานของฟรายเดย์แล้วค่ะ")
-            break
-
-        # Resolve a pending confirm-gated tool call before treating this as a new command
-        cancelled_gate = None  # (tool_name, args) cancelled this turn, or None — see
-        # _should_announce_cancel for why the cancel message itself is deferred
-        if pending_confirm:
-            tool_name, args = pending_confirm
-            pending_confirm = None
-            gate = CONFIRM_GATED[tool_name]
-            if _is_confirm(user_input):
-                result = gate["execute"](args)
-                history.append({"role": "user", "content": user_input})
-                history.append({"role": "assistant", "content": result})
-                log_to_vault("user", user_input)
-                log_to_vault("assistant", result)
-                speak(result)
+        turn = _latency.begin_turn(LATENCY_LOG_DIR)
+        path_type = "unknown"
+        turn_error = None
+        try:
+            # 1. Listen
+            user_input = listen_mic(r)
+            if not user_input:
+                path_type = "no_input"
                 continue
+
+            # Check for hardcoded shutdown commands (fallback)
+            if user_input.strip() in ["จบการทำงาน", "ปิดเครื่อง", "ลาก่อน", "บ๊ายบาย", "บาย"]:
+                path_type = "shutdown"
+                speak("รับทราบค่ะนาย ปิดระบบการทำงานของฟรายเดย์แล้วค่ะ")
+                log_to_vault("user", user_input)
+                log_to_vault("assistant", "รับทราบค่ะนาย ปิดระบบการทำงานของฟรายเดย์แล้วค่ะ")
+                break
+
+            # Resolve a pending confirm-gated tool call before treating this as a new command
+            cancelled_gate = None  # (tool_name, args) cancelled this turn, or None — see
+            # _should_announce_cancel for why the cancel message itself is deferred
+            if pending_confirm:
+                tool_name, args = pending_confirm
+                pending_confirm = None
+                gate = CONFIRM_GATED[tool_name]
+                if _is_confirm(user_input):
+                    path_type = "confirm_response"
+                    start = time.perf_counter()
+                    result = gate["execute"](args)
+                    _latency.record(
+                        "tool_result",
+                        tool=tool_name,
+                        latency_ms=round((time.perf_counter() - start) * 1000, 1),
+                        ok=True,
+                        confirmed=True,
+                    )
+                    history.append({"role": "user", "content": user_input})
+                    history.append({"role": "assistant", "content": result})
+                    log_to_vault("user", user_input)
+                    log_to_vault("assistant", result)
+                    speak(result)
+                    continue
+                else:
+                    cancelled_gate = (tool_name, args)
+                    # fall through — this utterance still gets processed as a fresh command below
+
+            history.append({"role": "user", "content": user_input})
+            log_to_vault("user", user_input)
+
+            # 2. Think
+            with _latency.span("llm"):
+                message = ask_ollama(user_input, history[:-1], tools=TOOL_SCHEMAS)
+            tool_calls = message["tool_calls"]
+            _latency.record(
+                "llm_result",
+                tool_call_count=len(tool_calls or []),
+                content_length=len(message.get("content") or ""),
+            )
+
+            gated = find_first_gated_tool_call(tool_calls)
+
+            if _should_announce_cancel(cancelled_gate, gated):
+                cancel_msg = CONFIRM_GATED[cancelled_gate[0]]["cancel"](cancelled_gate[1])
+                speak(cancel_msg)
+                log_to_vault("assistant", cancel_msg)
+
+            if gated:
+                # Every tool with a real-world effect is confirm-gated now (see CONFIRM_GATED
+                # comment above) — hold off on EVERYTHING this turn (including any other call)
+                # until the user confirms. Any non-gated call riding along gets dropped for this
+                # turn rather than risk splitting one reply into "ran silently" + "asked for
+                # confirmation", which is harder to reason about. search_web's two-pass summarize
+                # (untrusted-data framing + _strip_injection_tags(), see Test 3, 2026-07-02) now
+                # lives in _execute_search_web(), run only after confirmation.
+                name, args = gated
+                pending_confirm = (name, args)
+                path_type = "confirm_request"
+                content = message["content"].strip()
+                reply = (content + " " if content else "") + CONFIRM_GATED[name]["question"](args)
+            elif tool_calls:
+                path_type = "tool_call"
+                content = message["content"].strip()
+                with _latency.span("tool"):
+                    reply = (content + " " + run_native_tools(tool_calls)).strip()
             else:
-                cancelled_gate = (tool_name, args)
-                # fall through — this utterance still gets processed as a fresh command below
+                path_type = "normal_reply"
+                reply = message["content"]
 
-        history.append({"role": "user", "content": user_input})
-        log_to_vault("user", user_input)
-
-        # 2. Think
-        message = ask_ollama(user_input, history[:-1], tools=TOOL_SCHEMAS)
-        tool_calls = message["tool_calls"]
-
-        gated = find_first_gated_tool_call(tool_calls)
-
-        if _should_announce_cancel(cancelled_gate, gated):
-            cancel_msg = CONFIRM_GATED[cancelled_gate[0]]["cancel"](cancelled_gate[1])
-            speak(cancel_msg)
-            log_to_vault("assistant", cancel_msg)
-
-        if gated:
-            # Every tool with a real-world effect is confirm-gated now (see CONFIRM_GATED
-            # comment above) — hold off on EVERYTHING this turn (including any other call)
-            # until the user confirms. Any non-gated call riding along gets dropped for this
-            # turn rather than risk splitting one reply into "ran silently" + "asked for
-            # confirmation", which is harder to reason about. search_web's two-pass summarize
-            # (untrusted-data framing + _strip_injection_tags(), see Test 3, 2026-07-02) now
-            # lives in _execute_search_web(), run only after confirmation.
-            name, args = gated
-            pending_confirm = (name, args)
-            content = message["content"].strip()
-            reply = (content + " " if content else "") + CONFIRM_GATED[name]["question"](args)
-        elif tool_calls:
-            content = message["content"].strip()
-            reply = (content + " " + run_native_tools(tool_calls)).strip()
-        else:
-            reply = message["content"]
-
-        # Check if Friday requested shutdown
-        should_shutdown = False
-        if "[SHUTDOWN]" in reply:
-            should_shutdown = True
-            reply = reply.replace("[SHUTDOWN]", "").strip()
+            # Check if Friday requested shutdown
+            should_shutdown = False
+            if "[SHUTDOWN]" in reply:
+                should_shutdown = True
+                path_type = "shutdown"
+                reply = reply.replace("[SHUTDOWN]", "").strip()
+                
+            history.append({"role": "assistant", "content": reply})
+            log_to_vault("assistant", reply)
             
-        history.append({"role": "assistant", "content": reply})
-        log_to_vault("assistant", reply)
-        
-        # Limit history size to prevent context overflow (keep last 10 turns)
-        if len(history) > 21:
-            history = [history[0]] + history[-20:]
+            # Limit history size to prevent context overflow (keep last 10 turns)
+            if len(history) > 21:
+                history = [history[0]] + history[-20:]
+                
+            # 3. Speak
+            speak(reply)
             
-        # 3. Speak
-        speak(reply)
-        
-        if should_shutdown:
-            log_to_vault("assistant", "[ระบบปิดการทำงานอัตโนมัติ]")
-            break
+            if should_shutdown:
+                log_to_vault("assistant", "[ระบบปิดการทำงานอัตโนมัติ]")
+                break
+        except Exception as e:
+            turn_error = e
+            raise
+        finally:
+            turn.finish(path_type=path_type, error=turn_error)
 
 def shutdown_cleanup():
     print("\n👩‍💼 ปิดระบบ Friday เรียบร้อยแล้วค่ะ ลาก่อนค่ะนาย")

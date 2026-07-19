@@ -53,6 +53,7 @@ DISPATCH_TO_HERMES_POLL_INTERVAL = 3
 MAILBOX_INBOX_HERMES_DIR = os.path.join(MAILBOX_DIR, "inbox", "hermes")
 
 TTS_CACHE_DIR = os.path.join(SRC_DIR, "tts_cache")
+PHRASE_AUDIO_DIR = os.path.join(TTS_CACHE_DIR, "phrases")
 
 JAITTS_REPO = "JTS-AI/JaiTTS-F5TTS"
 VOICES_DIR = os.path.join(PROJECT_DIR, "voices")
@@ -65,5 +66,6 @@ JAITTS_REF_TEXT = (
 VAULT_DIR = os.path.join(PROJECT_DIR, "vault")
 FACTS_PATH = os.path.join(VAULT_DIR, "facts.md")
 HISTORY_DIR = os.path.join(VAULT_DIR, "history")
+LATENCY_LOG_DIR = os.path.join(VAULT_DIR, "latency")
 
 FIRE_REMINDER_SCRIPT = os.path.join(SRC_DIR, "fire_reminder.py")

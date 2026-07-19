@@ -5,9 +5,12 @@ import time
 import shutil
 import tempfile
 import subprocess
+import json
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import friday_walkie_talkie as fw
+from friday import latency as friday_latency
+from friday.phrases import PHRASE_BANK, get_phrase
 
 results = []
 
@@ -25,6 +28,47 @@ def check_open_app_blocked():
     if "ไม่อยู่ในลิสต์" not in out and "ไม่ได้" not in out:
         raise AssertionError(f"allowlist did not block 'cmd', got: {out}")
     return out
+
+
+def check_latency_turn_writes_jsonl():
+    tmp = tempfile.mkdtemp(prefix="friday-latency-test-")
+    try:
+        turn = friday_latency.begin_turn(tmp, source="test")
+        friday_latency.mark("listen_done")
+        with friday_latency.span("stt"):
+            time.sleep(0.01)
+        friday_latency.set_metric("cache_hit", False)
+        friday_latency.record("stt_result", recognized=True, text_length=4)
+        record = turn.finish(path_type="normal_reply")
+
+        files = os.listdir(tmp)
+        if len(files) != 1 or not files[0].endswith(".jsonl"):
+            raise AssertionError(f"expected one jsonl log file, got: {files}")
+
+        with open(os.path.join(tmp, files[0]), "r", encoding="utf-8") as f:
+            loaded = json.loads(f.readline())
+        if loaded["turn_id"] != record["turn_id"] or loaded["path_type"] != "normal_reply":
+            raise AssertionError(f"unexpected latency record: {loaded}")
+        if "stt_latency_ms" not in loaded["metrics"] or loaded["metrics"]["cache_hit"] is not False:
+            raise AssertionError(f"missing latency metrics: {loaded['metrics']}")
+        return f"latency log written: {files[0]}"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def check_phrase_bank_safety_metadata():
+    for phrase in PHRASE_BANK["confirm_suffix"]:
+        if not phrase["requires_action_context"] or phrase["safe_before_action"]:
+            raise AssertionError(f"confirm suffix must require action context: {phrase}")
+    for category, phrases in PHRASE_BANK.items():
+        if category == "confirm_suffix":
+            continue
+        for phrase in phrases:
+            if phrase["requires_action_context"] or not phrase["safe_before_action"]:
+                raise AssertionError(f"{category} phrase should be safe and context-free: {phrase}")
+    if get_phrase("greeting", "greeting_hello_short")["text"] != "สวัสดีค่ะนาย":
+        raise AssertionError("expected stable startup greeting phrase")
+    return f"{sum(len(v) for v in PHRASE_BANK.values())} phrase-bank entries validated"
 
 
 def check_remember_roundtrip():
@@ -63,6 +107,8 @@ def check_close_app_not_running():
 
 
 check("get_time", lambda: fw.tool_get_time())
+check("latency_turn_writes_jsonl", check_latency_turn_writes_jsonl)
+check("phrase_bank_safety_metadata", check_phrase_bank_safety_metadata)
 check("disk_space", lambda: fw.tool_disk_space())
 check("open_app(notepad)", lambda: fw.tool_open_app("notepad"))
 check("open_app(blocked-cmd)", check_open_app_blocked)
@@ -307,6 +353,29 @@ def check_all_gated_tools_individually_scannable():
         if not found or found[0] != name:
             raise AssertionError(f"{name} not detected by find_first_gated_tool_call: {found}")
     return f"{len(fw.CONFIRM_GATED)} gated tools each independently detected"
+
+
+def check_ungated_tools_list_and_progress_phrases():
+    expected = {
+        "close_camera",
+        "disk_space",
+        "get_time",
+        "list_processes",
+        "list_timers",
+        "look_camera",
+        "network_status",
+        "system_status",
+    }
+    got = set(fw.ungated_tool_names())
+    if got != expected:
+        raise AssertionError(f"unexpected ungated tool set: {sorted(got ^ expected)}")
+    if set(fw.UNGATED_TOOL_PROGRESS_PHRASES) - expected:
+        raise AssertionError("progress phrases must only target ungated tools")
+    if fw.phrase_before_ungated_tool("look_camera") != ("working", "working_looking"):
+        raise AssertionError("look_camera should announce a short safe progress phrase")
+    if fw.phrase_before_ungated_tool("get_time") is not None:
+        raise AssertionError("fast read-only tools should not add spoken latency")
+    return f"{len(got)} ungated tools, progress phrase only where safe"
 
 
 def check_ungated_tier0_tools():
@@ -556,6 +625,7 @@ check("empty_recycle_bin(wiring only)", check_empty_recycle_bin_wiring)
 check("clipboard_read(wiring only)", check_clipboard_read_wiring)
 check("tier1_tools_gated(wiring only)", check_tier1_tools_gated)
 check("all_gated_tools_individually_scannable", check_all_gated_tools_individually_scannable)
+check("ungated_tools_list_and_progress_phrases", check_ungated_tools_list_and_progress_phrases)
 check("ungated_tier0_tools", check_ungated_tier0_tools)
 
 
@@ -897,7 +967,19 @@ def check_run_native_tools():
     out_unknown = fw.run_native_tools([_call("not_a_real_tool")])
     if "ไม่รู้จักเครื่องมือ" not in out_unknown:
         raise AssertionError(f"expected unknown-tool message, got: {out_unknown!r}")
-    return "multi-call join + unknown-tool handling ok"
+
+    spoken = []
+    orig_speak_phrase = fw.speak_phrase
+    try:
+        fw.speak_phrase = lambda category, phrase_id=None: spoken.append((category, phrase_id)) or "กำลังดูให้นะคะ"
+        out_camera = fw.run_native_tools([_call("look_camera")])
+    finally:
+        fw.speak_phrase = orig_speak_phrase
+    if spoken != [("working", "working_looking")]:
+        raise AssertionError(f"expected look_camera progress phrase, got: {spoken}")
+    if "กล้องยังไม่ได้เปิด" not in out_camera:
+        raise AssertionError(f"expected look_camera result after progress phrase, got: {out_camera!r}")
+    return "multi-call join + unknown-tool handling + look_camera progress phrase ok"
 
 
 def check_native_tool_calling_live():
