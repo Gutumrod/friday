@@ -18,12 +18,30 @@
 4. ทำ Friday UI เป็น dashboard จริง ไม่ใช่ mockup หลอก
 5. เชื่อม state/tool/memory/Hermes/voice ทีละชั้น
 
+## สถานะล่าสุด ณ 2026-07-19
+
+อัปเดตหลัง commit `049bc72`:
+
+- Phase 1 refactor core: ทำเสร็จระดับใช้งานจริงแล้วใน `src/friday/`; `src/friday_walkie_talkie.py` เป็น compatibility launcher
+- Phase 2 API service: ทำเสร็จระดับ v1 แล้วใน `src/friday/api.py`
+- Phase 3 UI dashboard: scaffold และเชื่อม client จริงแล้วใน `ui/`
+- Phase 4 real wiring: ต่อ `/api/status`, `/api/chat`, `/api/tool/confirm`, `/api/memory/facts`, `/api/history/latest`, `/api/voice/start`, `/api/voice/stop`, และ `/ws/events` แล้ว
+- Phase 5 verification: Python tests, UI build, API status, Vite proxy, `/api/chat`, confirm cancel flow, `/ws/events` snapshot, and browser confirm-modal flow verified on 2026-07-19
+- API launcher added: `run_friday_api.bat` sets `PYTHONPATH=src` before starting `uvicorn`, because direct `python -m uvicorn friday.api:app` from repo root cannot import the `friday` package without that path.
+
+ข้อจำกัดปัจจุบัน:
+
+- `/api/voice/start` และ `/api/voice/stop` ตอนนี้เป็น state marker สำหรับ UI ยังไม่ start/stop realtime voice loop จริง
+- UI ยังมี mock fallback code อยู่ แต่ `USE_MOCK = false` เป็นค่า default
+- ต้องรัน live verification ทุกครั้งก่อนถือว่า Friday UI v1 พร้อมใช้จริง เพราะ backend/LLM/tool behavior อาจเปลี่ยนตาม runtime state
+- Environment drift found and fixed locally: `requirements.txt` already listed `websockets==15.0.1`, but the active conda env was missing it. Installed it into `C:\Users\Win10\miniconda3\envs\friday` during verification.
+
 ## Current State ที่ต้องรู้ก่อนเริ่ม
 
 Source of truth ปัจจุบัน:
 
 - `AGENTS.md` บอกให้เปิด handoff ล่าสุดก่อนเสมอ
-- handoff ล่าสุดที่อ่านแล้ว: `handoff/2026-07-04-notify-hermes-mic-fixes-stt-swap-and-live-decision.md`
+- handoff ล่าสุดที่อ่านแล้ว: `handoff/2026-07-19-tv-connect-preflight-and-startup-live-test.md`
 - main script ปัจจุบัน: `src/friday_walkie_talkie.py`
 - test suite ปัจจุบัน: `src/test_tools.py`
 - launcher ปัจจุบัน: `run_friday.bat`
@@ -63,6 +81,8 @@ Friday Core Engine
 - Memory/Hermes: ใช้ของเดิมก่อน แล้วค่อยปรับให้เป็น service-friendly
 
 ## Phase 1: Refactor Core โดยไม่เปลี่ยนพฤติกรรม
+
+Status: done for v1
 
 เป้าหมาย: แยก `src/friday_walkie_talkie.py` ให้เป็นโมดูล แต่ behavior ต้องเหมือนเดิมมากที่สุด
 
@@ -109,7 +129,15 @@ python src/test_tools.py
 python src/friday_walkie_talkie.py
 ```
 
+Implementation status:
+
+- `config.py`, `memory.py`, `llm.py`, `latency.py`, `phrases.py`, `api.py`, and `core.py` now exist under `src/friday/`
+- `src/friday_walkie_talkie.py` remains the launcher path for the old walkie-talkie flow
+- Full tools split into subpackages is not done yet; keep it out of scope unless `core.py` size blocks the next feature
+
 ## Phase 2: Friday API Service
+
+Status: done for v1
 
 เป้าหมาย: เพิ่ม service ให้ UI คุยกับ Friday ได้โดยไม่ import internals ตรงๆ
 
@@ -156,7 +184,16 @@ Event types ที่ UI ต้องเห็น:
 - `POST /api/chat` อาจเริ่มจาก text command ก่อน
 - voice loop เดิมอาจยังเป็น process หลัก แล้ว API เป็นอีก entrypoint ได้ แต่ต้องไม่ทำให้ state ตีกัน
 
+Implementation status:
+
+- Existing endpoints: `/api/status`, `/api/tools`, `/api/memory/facts`, `/api/history/latest`, `/api/chat`, `/api/tool/confirm`, `/api/voice/start`, `/api/voice/stop`, `/ws/events`
+- API preserves the existing `CONFIRM_GATED` policy by holding pending confirmations server-side
+- Voice start/stop is currently UI-visible state only, not the microphone loop
+- Start API on Windows with `run_friday_api.bat`
+
 ## Phase 3: Friday UI Dashboard
+
+Status: done for v1 scaffold, browser verification passed with minor console warning
 
 เป้าหมาย: ทำ local web dashboard สำหรับ Friday UI
 
@@ -210,7 +247,18 @@ Design note:
 - อย่าใส่คำอธิบายฟีเจอร์ยาวๆ ในหน้า app
 - UI ควรโชว์ state จริงจาก API ตั้งแต่ v1 แม้บาง panel จะยัง read-only
 
+Implementation status:
+
+- UI exists under `ui/` with React/Vite and Friday dashboard components
+- `ui/src/api/fridayClient.ts` uses real backend calls by default with `USE_MOCK = false`
+- `ToolConfirmModal` is wired to `/api/tool/confirm`
+- Browser verification captured screenshot at runtime path `output/playwright/friday-ui-live.png`
+- Minor observed warning: initial browser console reported one transient WebSocket connection warning to `ws://127.0.0.1:3000/ws/events`; direct API WebSocket and Vite proxy WebSocket both returned `snapshot` in explicit probes, and no page errors were observed
+- Remaining work here is polish and sustained-use tightening, not more mock UI
+
 ## Phase 4: เชื่อมของจริงทีละส่วน
+
+Status: done for v1 items 1-5, partial for items 6-7
 
 ลำดับที่แนะนำ:
 
@@ -224,20 +272,32 @@ Design note:
 
 อย่าเริ่มจาก animation สวยอย่างเดียว เพราะจะกลับไปเป็น shell สวยแต่ backend ยังไม่พร้อม
 
+Current item status:
+
+- 1. `/api/status`: wired
+- 2. `/api/chat`: wired
+- 3. WebSocket events: wired and verified through API direct and Vite proxy
+- 4. tool call + confirm gate: wired and verified in browser with `open_app` pending confirmation then reject
+- 5. memory facts/history: wired
+- 6. Hermes notify/dispatch status: partially represented through events, needs live workflow verification
+- 7. voice loop start/stop: state marker only, real audio-loop control not implemented
+
 ## Phase 5: Verification Checklist
 
 ก่อนถือว่า Friday UI v1 ใช้ได้:
 
-- `python src/test_tools.py` ผ่าน
-- `run_friday.bat` ยังรันได้
-- API เปิดได้ผ่าน `uvicorn`
-- UI เปิดได้ใน browser
-- `/api/status` ได้ข้อมูลจริง
-- ส่ง text command แล้ว LLM ตอบผ่าน core จริง
-- tool ที่มี side effect ยังต้อง confirm ก่อน execute
-- activity log แสดง event จริง ไม่ใช่ mock ล้วน
-- ไม่มี secret/config ใหม่หลุดเข้า git
-- ไม่มี runtime/generated junk ถูก add เข้า git
+- `python src/test_tools.py` ผ่าน: verified 2026-07-19, 76/76
+- `python src/test_api.py` ผ่าน: verified 2026-07-19, 2 tests OK
+- `npm run build` ผ่าน: verified 2026-07-19
+- API เปิดได้ผ่าน `run_friday_api.bat` หรือ equivalent `PYTHONPATH=src` uvicorn command: verified with temporary in-process uvicorn
+- UI dev server เปิดได้ที่ `http://127.0.0.1:3000/`: verified HTTP 200
+- `/api/status` ได้ข้อมูลจริง: verified direct API and through Vite proxy
+- ส่ง text command แล้ว LLM ตอบผ่าน core จริง: verified `ตอนนี้กี่โมง` -> `get_time`
+- tool ที่มี side effect ยังต้อง confirm ก่อน execute: verified `เปิด notepad ให้หน่อย` -> pending `open_app`, then cancelled without executing
+- `/ws/events` ใช้งานได้: verified direct API and Vite proxy snapshot after installing missing `websockets==15.0.1` into the active env
+- activity log แสดง event จริง ไม่ใช่ mock ล้วน: backend WebSocket event source verified, browser flow verified confirm modal and reject path
+- ไม่มี secret/config ใหม่หลุดเข้า git: check before commit
+- ไม่มี runtime/generated junk ถูก add เข้า git: check before commit
 
 ## Out of Scope สำหรับรอบแรก
 
@@ -261,4 +321,3 @@ Design note:
 7. เขียน handoff ใหม่บอกว่าแยกอะไรแล้ว behavior เปลี่ยนหรือไม่
 
 ถ้าจะเริ่มเล็กที่สุด แนะนำแยก `config.py`, `memory.py`, `llm.py` ก่อน เพราะเป็น dependency กลางที่ UI/API ต้องใช้ต่อ และยังไม่แตะ hardware/device-heavy tools อย่าง camera/TV/TTS มากเกินไป
-

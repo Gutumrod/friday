@@ -10,3 +10,4 @@ backups/
 *.env
 friday_temp_response*
 .tmp_tts_rar_*/
+output/

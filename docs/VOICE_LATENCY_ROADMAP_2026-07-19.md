@@ -1,7 +1,7 @@
 # Friday Voice Latency Roadmap
 
 วันที่: 2026-07-19
-สถานะ: planning document
+สถานะ: active roadmap, updated after commit 049bc72
 เจ้าของงาน: Friday project
 
 เอกสารนี้คือ source of truth สำหรับงานลด latency ของ voice loop ต่อจากนี้ ถ้าย้ายไปทำบน Mac หรือให้ agent อื่นรับช่วง ให้อ่านไฟล์นี้ก่อนเริ่ม และเมื่อทำเฟสไหนจบต้องอัปเดตสถานะในไฟล์นี้ด้วย
@@ -104,6 +104,10 @@ Implementation notes:
 - 2026-07-19: automated validation passed:
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py` -> 73/73 passed
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_api.py` -> 2 tests OK
+- 2026-07-19: implementation is complete enough for runtime use, but this phase stays `in progress` because the required 10-20 spoken-turn baseline has not been collected yet.
+- 2026-07-19: latest validation after TV preflight work:
+  - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py` -> 76/76 passed
+  - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_api.py` -> 2 tests OK
 - Pending before Phase 0 can be marked `done`: run real voice baseline with 10-20 spoken turns and summarize median/p95 bottlenecks here.
 
 Update requirement when done:
@@ -162,6 +166,14 @@ Implementation notes:
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe -m py_compile src\friday\core.py src\friday\latency.py src\test_tools.py`
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py` -> 74/74 passed
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_api.py` -> 2 tests OK
+- 2026-07-19: startup choreography was live-tested successfully after commit `b5e87dc`:
+  - Friday speaks `สวัสดีค่ะนาย`
+  - then `ขอเช็คไมค์กับวอร์มเสียงแป๊บนึงค่ะ`
+  - then calibrates mic while quiet
+  - then speaks `พร้อมฟังค่ะนาย`
+  - then starts listening and warms JaiTTS in the background
+- 2026-07-19: TV connection error flow now uses vetted phrase-bank text and fails fast before entering `pywebostv` when the configured TV IP is offline or stale. Commit: `049bc72`.
+- 2026-07-19: current low-risk wins are implemented, but this phase stays `in progress` until Phase 0 has before/after spoken metrics.
 
 Update requirement when done:
 
@@ -189,6 +201,12 @@ Acceptance criteria:
 - long-running command มี response signal เร็วขึ้น
 - ack ไม่ทำให้ safety semantics เพี้ยน
 - error path ยังบอกผลจริง ไม่หลอกว่าสำเร็จ
+
+Current recommendation:
+
+- Start this only after the UI/API end-to-end verification pass, because UI events can provide a non-audio acknowledgement channel for slow commands without adding spoken latency.
+- First candidate tools: `search_web`, `dispatch_to_hermes`, `tv_play_video`, and `look_camera` only if live logs show they still feel slow.
+- Keep fast read-only tools silent unless metrics show a real user-facing wait.
 
 Update requirement when done:
 
@@ -323,3 +341,5 @@ Update requirement when decision changes:
 - 2026-07-19: Implemented fixed phrase bank and seeded 21 local JaiTTS phrase audio files. Friday is still not opened after this change per user instruction.
 - 2026-07-19: Promoted 8 vetted phrase variants from `tts_cache.rar` into named phrase IDs without opening Friday.
 - 2026-07-19: Wired phrase progress only for ungated `look_camera`; gated tools remain untouched.
+- 2026-07-19: Live-tested startup phrase choreography successfully and added TV connection preflight/error phrase wiring in commit `049bc72`.
+- 2026-07-19: Roadmap status refreshed. Phase 0 and Phase 1 remain `in progress` only because spoken baseline metrics are still pending, not because implementation is missing.

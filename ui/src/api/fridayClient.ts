@@ -243,7 +243,10 @@ class FridayClient {
     const endpoint = active ? '/api/voice/start' : '/api/voice/stop';
     const res = await fetch(endpoint, { method: 'POST' });
     const data = await res.json();
-    return data.success;
+    if (!res.ok) {
+      throw new Error(`POST ${endpoint} failed: ${res.status}`);
+    }
+    return Boolean(data.running) === active;
   }
 
   // --- WebSocket Simulation & Event Dispatcher ---
