@@ -1,7 +1,7 @@
 # Friday Voice Latency Roadmap
 
 วันที่: 2026-07-19
-สถานะ: active roadmap, updated after commit 049bc72
+สถานะ: active roadmap, refreshed 2026-07-26 after reviewing JaiTTS-F5TTS Colab evidence
 เจ้าของงาน: Friday project
 
 เอกสารนี้คือ source of truth สำหรับงานลด latency ของ voice loop ต่อจากนี้ ถ้าย้ายไปทำบน Mac หรือให้ agent อื่นรับช่วง ให้อ่านไฟล์นี้ก่อนเริ่ม และเมื่อทำเฟสไหนจบต้องอัปเดตสถานะในไฟล์นี้ด้วย
@@ -27,6 +27,11 @@
 - LLM mode ปัจจุบัน: `stream: false`
 - TTS หลัก: JaiTTS local GPU
 - TTS fallback / voice override: edge-tts
+- external JaiTTS reference checked 2026-07-26: `JaiTTS_F5TTS_Colab.ipynb`
+  (`https://colab.research.google.com/drive/16AkcFUGo1mq6DxlJGRhxLcvKzv8SY1LN`) uses
+  `biodatlab/thonburian-tts`, `JTS-AI/JaiTTS-F5TTS`, `FlowTTSPipeline`, explicit
+  `reference_text`, optional Gemini phrase chunking, and per-chunk audio stitching.
+  Treat it as benchmark/reference workflow only, not a Friday runtime dependency.
 - safety: tool ที่มี side effect ต้องอยู่ใน `CONFIRM_GATED`
 - tests ปัจจุบัน:
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py`
@@ -214,6 +219,69 @@ Update requirement when done:
 - บันทึก ack rules และข้อห้าม
 - เพิ่มตัวอย่าง log 3-5 turn
 
+### Phase 1.5: JaiTTS Serious Voice Quality Program
+
+Status: not started
+
+Objective:
+
+- ทำให้ decision เรื่องเสียง Friday อยู่บน benchmark ที่ฟังได้จริง ไม่ใช่ความรู้สึกจากตัวอย่างกระจัดกระจาย
+- แยกปัญหา latency ออกจากปัญหาคุณภาพเสียง/สำเนียง/คำทับศัพท์
+- ใช้ JaiTTS-F5TTS Colab เป็น reference workflow เพื่อ harden local Friday JaiTTS pipeline ไม่ใช่ย้าย runtime ไป Colab
+
+External reference checked 2026-07-26:
+
+- Colab file: `JaiTTS_F5TTS_Colab.ipynb`
+- Drive/Colab ID: `16AkcFUGo1mq6DxlJGRhxLcvKzv8SY1LN`
+- Notebook flow:
+  - clone `https://github.com/biodatlab/thonburian-tts.git`
+  - install repo `requirements.txt` plus `ffmpeg` and `python-crfsuite`
+  - upload short reference audio and exact transcription
+  - optionally call Gemini `gemini-2.5-flash` to split Thai text into natural 50-80 character chunks
+  - load `FlowTTSPipeline` with `JTS-AI/JaiTTS-F5TTS/model.pt` and `vocab.txt`
+  - set `silence_threshold=-45`, `cfg_strength=2.0`, `nfe_step=32`, `speed=1.0`
+  - set `pipeline.model.remove_silence = True`
+  - generate one `.wav` per chunk and stitch with 150 ms gaps
+
+Candidate work:
+
+- Create a local benchmark script under `audit/` or `scripts/` that uses the Friday conda env and local models:
+  `C:\Users\Win10\miniconda3\envs\friday\python.exe`,
+  `D:\models\JaiTTS-F5TTS\model.pt`,
+  `D:\models\JaiTTS-F5TTS\vocab.txt`.
+- Build a fixed evaluation set from real Friday utterances:
+  startup phrases, confirm prompts, tool success/error replies, Thai-English app names,
+  numbers, time/date, TV/YouTube commands, and Hermes/agent-dispatch wording.
+- Test 3 generation modes:
+  raw full text, deterministic local chunking, and optional Gemini-assisted chunking.
+- Test reference-audio variants:
+  clean mono 24 kHz 8-12 seconds with exact `ref_text`, longer reference clip, and noisy reference clip.
+- Compare against current fallback/override path (`edge-tts`) only on the same text set.
+- Keep generated audio out of git and clean temporary samples after review unless explicitly asked to preserve them.
+- Store only a compact report under `audit/` or `docs/`, including commands, env, GPU/CUDA status, sample set, qualitative verdict, and measured generation time.
+
+Constraints:
+
+- Do not make Colab part of Friday runtime.
+- Do not spend Gemini calls for normal runtime chunking. Gemini-assisted chunking is benchmark-only until approved.
+- Do not replace phrase bank behavior until quality and latency improve on real Friday text.
+- Do not treat JaiTTS as production-quality for long Thai-English technical content until the benchmark passes.
+- Generated `.wav`, model cache, `tts_output/`, `src/tts_cache/`, and `vault/` stay runtime-local/ignored.
+
+Acceptance criteria:
+
+- Report covers at least 30 Friday-real utterances and 3 reference-audio variants.
+- Report has latency per clip and a listening-quality verdict for Thai-only, Thai-English, numbers, and tool-confirm prompts.
+- At least one mode clearly beats current Friday JaiTTS setup on quality without making short replies slower.
+- If no mode passes, record the failure and keep current architecture unchanged.
+- Existing tests still pass if code is touched; docs-only benchmark planning does not require test execution.
+
+Update requirement when done:
+
+- เปลี่ยน status เป็น `done`, `blocked`, หรือ `rejected`
+- เพิ่ม report path, tested commit/env, CUDA status, and short verdict
+- ถ้าเลือก new chunking/reference policy ให้เพิ่ม rollback path และ update `Phase 3` policy ด้วย
+
 ### Phase 3: Streaming LLM + Sentence TTS
 
 Status: not started
@@ -228,6 +296,8 @@ Constraints:
 - ถ้า response เป็น tool call หรือ confirm-sensitive path ให้ใช้ non-streaming path เดิมก่อน
 - streaming ใช้เฉพาะ final natural-language reply ที่ปลอดภัย
 - ต้องมี parser ที่แยก sentence boundary ได้พอสำหรับภาษาไทย/อังกฤษปนกัน
+- sentence chunking policy should reuse findings from Phase 1.5. The Colab-style Gemini
+  chunker is allowed only as benchmark evidence until runtime cost/safety is approved.
 
 Files likely touched:
 
@@ -343,3 +413,5 @@ Update requirement when decision changes:
 - 2026-07-19: Wired phrase progress only for ungated `look_camera`; gated tools remain untouched.
 - 2026-07-19: Live-tested startup phrase choreography successfully and added TV connection preflight/error phrase wiring in commit `049bc72`.
 - 2026-07-19: Roadmap status refreshed. Phase 0 and Phase 1 remain `in progress` only because spoken baseline metrics are still pending, not because implementation is missing.
+- 2026-07-26: Reviewed external `JaiTTS_F5TTS_Colab.ipynb` and added Phase 1.5
+  for a serious local JaiTTS quality/latency benchmark before changing Friday runtime architecture.
