@@ -592,6 +592,57 @@ Acceptance:
 - no Google Drive build/install path requirement
 - no generated runtime files committed
 
+### Phase 6: Optional Second Brain Project Reporter
+
+Status: future optional feature, not part of the current Hermes shadow/sync MVP
+
+Intent:
+
+- let Friday/Hermes report project situations from a user-owned markdown knowledge vault
+- support the owner's `Gutumrod/second-brain-vault` without hard-coding that repo or path
+- make the feature useful for other users who point Friday at their own vault
+
+Config rule:
+
+- default must be disabled
+- no hard-coded `Gutumrod/second-brain-vault`
+- no hard-coded local path such as `D:\AI-Workspace\...`
+- all repo/path/index settings must come from environment variables or ignored local config
+
+Proposed config:
+
+- `SECOND_BRAIN_ENABLED=false`
+- `SECOND_BRAIN_PROVIDER=local_git`
+- `SECOND_BRAIN_LOCAL_PATH=`
+- `SECOND_BRAIN_REPO_URL=`
+- `SECOND_BRAIN_BRANCH=main`
+- `SECOND_BRAIN_PROJECT_INDEX=01-Projects/PROJECT-INDEX.md`
+- `SECOND_BRAIN_VAULT_INDEX=00-System/VAULT_INDEX.md`
+- `SECOND_BRAIN_WRITE_MODE=read_only`
+
+Work:
+
+- add a read-only vault connector that can read markdown project indexes and project notes
+- start with local clone/path access, not automatic GitHub writes
+- read vault bootstrap files before project reports when available:
+  - `HOME.md`
+  - `00-System/VAULT_INDEX.md`
+  - `00-System/AGENT_RULES.md`
+  - configured project index path
+- extract project names, latest notes, status hints, blockers, next actions, and recently updated files
+- expose a read-only report capability such as `second_brain_project_report`
+- keep summaries short enough for voice output and link/store longer reports as artifacts
+- if writeback is ever enabled, restrict AI-generated writes to vault-approved areas such as agent logs or inbox, and require explicit user approval
+
+Acceptance:
+
+- feature is fully off when `SECOND_BRAIN_ENABLED=false`
+- owner can point the feature at `Gutumrod/second-brain-vault` through config only
+- another user can point the feature at a different markdown vault without code changes
+- read-only project status report works without modifying the vault
+- no secrets, private repo URLs with tokens, or raw Git credentials are logged
+- no project docs are edited without direct user instruction
+
 ## First Implementation Recommendation
 
 Start with Phase 0 + Phase 1 only.
