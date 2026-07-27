@@ -118,6 +118,30 @@ Added to `docs/FRIDAY_FOR_HERMES_PLAN_2026-07-26.md`:
   - config/secrets come from environment/local ignored config, not hard-code.
   - telemetry includes Hermes TTFB, total latency, fallback reason, retry count, keepalive count, detach/timeout flags.
 
+## Hermes API Docs Follow-Up
+
+CEO supplied Hermes-generated API docs for Friday:
+
+- `D:\AI-Workspace\runtime\hermes-native\workspace\hermes-dashboard-api-for-friday.md`
+- `D:\AI-Workspace\runtime\hermes-native\hermes-native-vault\03_Technical_References\hermes-dashboard-api-probe.md`
+- `D:\AI-Workspace\agents\hermes\handoff\2026-07-27-phase0-probe.md`
+
+Live probe on 2026-07-27 confirmed:
+
+- Dashboard `http://127.0.0.1:9119` is running now.
+- Dashboard HTML returns a session token.
+- OpenAPI version is `0.19.0` with 248 paths.
+- `/api/health` and `/api/status` work.
+- Static docs mention `POST /api/chat`, but live OpenAPI did not list `/api/chat`.
+- Known chat candidate is the WebSocket path used by `ask-hermes-pc.mjs`: `/api/ws`, `session.create`, then `prompt.submit`.
+- Static docs mention `/api/kanban/...`, but live OpenAPI shows `/api/plugins/kanban/...`.
+
+Action for Phase 0:
+
+- Build Friday's Hermes endpoint manifest from live OpenAPI, not only static docs.
+- Probe chat through WebSocket before implementing Sync Delegation.
+- Treat dashboard token as ephemeral and never hard-code it.
+
 ## Recommended Next Step
 
 Start with Phase 0 + Phase 1 only:

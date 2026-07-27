@@ -602,6 +602,40 @@ Do not start with full direct-connect tool execution. The useful first question 
 - Can Hermes produce a better routing decision than Friday's current LLM path?
 - Can we measure latency and reliability before using Hermes output live?
 
+## Phase 0 API Evidence From Hermes
+
+Updated 2026-07-27 from Hermes-provided docs and live dashboard probe.
+
+Hermes documents supplied:
+
+- `D:\AI-Workspace\runtime\hermes-native\workspace\hermes-dashboard-api-for-friday.md`
+- `D:\AI-Workspace\runtime\hermes-native\hermes-native-vault\03_Technical_References\hermes-dashboard-api-probe.md`
+- `D:\AI-Workspace\agents\hermes\handoff\2026-07-27-phase0-probe.md`
+
+Live verified on 2026-07-27:
+
+- Dashboard URL: `http://127.0.0.1:9119`
+- Start command: `hermes dashboard --port 9119 --host 127.0.0.1 --skip-build --no-open`
+- Dashboard HTML returns 200 and includes a session token.
+- OpenAPI: `http://127.0.0.1:9119/openapi.json`
+- OpenAPI version: `0.19.0`
+- Path count observed: 248
+- `/api/health` works and does not require auth.
+- `/api/status` works with current session token.
+- `/api/chat` was not present in the live OpenAPI spec during the probe.
+- `ask-hermes-pc.mjs` talks to Hermes through dashboard WebSocket `/api/ws` using JSON-RPC methods:
+  `session.create` then `prompt.submit`.
+
+Important correction:
+
+- Do not assume REST `POST /api/chat` exists until a live probe confirms it.
+- For Sync Delegation Phase 0, treat dashboard WebSocket prompt submission as the known working chat path candidate.
+- Kanban endpoints in live OpenAPI are under `/api/plugins/kanban/...`, not plain `/api/kanban/...`.
+- Model info endpoint observed in live OpenAPI is `/api/model/info`, not plain `/api/model`.
+- Dashboard token changes on dashboard restart; Friday must extract it from dashboard HTML or use a future stable local auth mechanism.
+
+Phase 0 should produce a small machine-readable endpoint manifest based on live OpenAPI, not only static docs.
+
 ## Explicit Non-Goals For MVP
 
 - no wake word
