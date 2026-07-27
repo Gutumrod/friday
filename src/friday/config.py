@@ -67,5 +67,16 @@ VAULT_DIR = os.path.join(PROJECT_DIR, "vault")
 FACTS_PATH = os.path.join(VAULT_DIR, "facts.md")
 HISTORY_DIR = os.path.join(VAULT_DIR, "history")
 LATENCY_LOG_DIR = os.path.join(VAULT_DIR, "latency")
+HERMES_SHADOW_LOG_DIR = os.path.join(VAULT_DIR, "hermes_shadow")
+
+FRIDAY_FOR_HERMES_MODE = os.environ.get("FRIDAY_FOR_HERMES_MODE", "off").strip().lower()
+HERMES_DASHBOARD_URL = os.environ.get("HERMES_DASHBOARD_URL", "http://127.0.0.1:9119").strip().rstrip("/")
+HERMES_KEEPALIVE_INTERVAL_SECONDS = float(os.environ.get("HERMES_KEEPALIVE_INTERVAL_SECONDS", "5"))
+HERMES_SYNC_SOFT_DETACH_SECONDS = float(os.environ.get("HERMES_SYNC_SOFT_DETACH_SECONDS", "20"))
+HERMES_SYNC_HARD_TIMEOUT_SECONDS = float(os.environ.get("HERMES_SYNC_HARD_TIMEOUT_SECONDS", "60"))
+HERMES_CONNECT_TIMEOUT_SECONDS = float(os.environ.get("HERMES_CONNECT_TIMEOUT_SECONDS", "5"))
+FRIDAY_CORRELATION_ID_PREFIX = os.environ.get("FRIDAY_CORRELATION_ID_PREFIX", "ffh").strip() or "ffh"
+FRIDAY_HERMES_CONTEXT_BUDGET_TOKENS = int(os.environ.get("FRIDAY_HERMES_CONTEXT_BUDGET_TOKENS", "2000"))
+FRIDAY_HERMES_CONTEXT_POLICY = os.environ.get("FRIDAY_HERMES_CONTEXT_POLICY", "minimal").strip() or "minimal"
 
 FIRE_REMINDER_SCRIPT = os.path.join(SRC_DIR, "fire_reminder.py")

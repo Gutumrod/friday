@@ -10,6 +10,7 @@ import json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import friday_walkie_talkie as fw
 from friday import latency as friday_latency
+from friday import hermes_client
 from friday.phrases import PHRASE_BANK, get_phrase
 
 results = []
@@ -71,6 +72,98 @@ def check_phrase_bank_safety_metadata():
     return f"{sum(len(v) for v in PHRASE_BANK.values())} phrase-bank entries validated"
 
 
+def check_hermes_shadow_default_off():
+    orig_mode = fw.FRIDAY_FOR_HERMES_MODE
+    orig_schedule = fw._hermes_client.schedule_shadow_request
+    calls = []
+    fw.FRIDAY_FOR_HERMES_MODE = "off"
+    fw._hermes_client.schedule_shadow_request = lambda *a, **kw: calls.append((a, kw))
+    try:
+        result = fw.maybe_shadow_hermes_user_text("ทดสอบ")
+    finally:
+        fw.FRIDAY_FOR_HERMES_MODE = orig_mode
+        fw._hermes_client.schedule_shadow_request = orig_schedule
+    if result is not None or calls:
+        raise AssertionError("shadow scheduler must stay idle when FRIDAY_FOR_HERMES_MODE=off")
+    return "default/off mode does not schedule Hermes"
+
+
+def check_hermes_shadow_schedule_is_fire_and_forget():
+    orig_mode = fw.FRIDAY_FOR_HERMES_MODE
+    orig_schedule = fw._hermes_client.schedule_shadow_request
+    seen = {}
+
+    def fake_schedule(client, text, *, correlation_id):
+        seen["client"] = client
+        seen["text"] = text
+        seen["correlation_id"] = correlation_id
+        return object()
+
+    fw.FRIDAY_FOR_HERMES_MODE = "shadow"
+    fw._hermes_client.schedule_shadow_request = fake_schedule
+    try:
+        correlation_id = fw.maybe_shadow_hermes_user_text("สวัสดี Hermes")
+    finally:
+        fw.FRIDAY_FOR_HERMES_MODE = orig_mode
+        fw._hermes_client.schedule_shadow_request = orig_schedule
+    if not correlation_id or not correlation_id.startswith(fw.FRIDAY_CORRELATION_ID_PREFIX + "_"):
+        raise AssertionError(f"unexpected correlation id: {correlation_id}")
+    if seen.get("text") != "สวัสดี Hermes" or seen.get("correlation_id") != correlation_id:
+        raise AssertionError(f"shadow request was not scheduled correctly: {seen}")
+    return f"scheduled with {correlation_id}"
+
+
+def check_hermes_shadow_log_redacts_response_body():
+    tmp = tempfile.mkdtemp(prefix="friday-hermes-shadow-")
+    config = hermes_client.HermesConfig(
+        dashboard_url="http://127.0.0.1:9119",
+        connect_timeout_seconds=0.01,
+        hard_timeout_seconds=0.01,
+        context_budget_tokens=2000,
+        context_policy="minimal",
+        shadow_log_dir=tmp,
+    )
+
+    class FakeClient(hermes_client.HermesDashboardClient):
+        async def submit_prompt(self, text, *, correlation_id):
+            return {
+                "correlation_id": correlation_id,
+                "status": "ok",
+                "error": None,
+                "hermes_ttfb_ms": 1.0,
+                "hermes_total_latency_ms": 2.0,
+                "response_text": "secret response body",
+                "token_present": True,
+                "ws_url": "ws://127.0.0.1:9119/api/ws?token=<redacted>",
+            }
+
+    try:
+        record = FakeClient(config).shadow_user_text("คำสั่งทดสอบ", correlation_id="ffh_test")
+        files = os.listdir(tmp)
+        if len(files) != 1:
+            raise AssertionError(f"expected one shadow log file, got: {files}")
+        with open(os.path.join(tmp, files[0]), "r", encoding="utf-8") as f:
+            loaded = json.loads(f.readline())
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if "response_text" in record or "response_text" in loaded:
+        raise AssertionError("shadow log must not persist the full Hermes response body")
+    if "secret response body" in json.dumps(loaded, ensure_ascii=False):
+        raise AssertionError("shadow log leaked full response body")
+    if loaded["response_text_length"] != len("secret response body"):
+        raise AssertionError(f"expected response length only, got: {loaded}")
+    return "shadow log stores metadata/latency without response body"
+
+
+def check_hermes_error_redaction():
+    redacted = hermes_client._redact_text("ws://x/api/ws?token=abc123 failed; Authorization: Bearer abc123")
+    if "abc123" in redacted:
+        raise AssertionError(f"secret-like token survived redaction: {redacted}")
+    if "token=<redacted>" not in redacted or "Bearer <redacted>" not in redacted:
+        raise AssertionError(f"expected redaction markers, got: {redacted}")
+    return redacted
+
+
 def check_remember_roundtrip():
     backup = fw.load_facts()
     marker = "__TEST_MARKER_DO_NOT_KEEP__"
@@ -109,6 +202,10 @@ def check_close_app_not_running():
 check("get_time", lambda: fw.tool_get_time())
 check("latency_turn_writes_jsonl", check_latency_turn_writes_jsonl)
 check("phrase_bank_safety_metadata", check_phrase_bank_safety_metadata)
+check("hermes_shadow(default_off)", check_hermes_shadow_default_off)
+check("hermes_shadow(schedule)", check_hermes_shadow_schedule_is_fire_and_forget)
+check("hermes_shadow(log_redaction)", check_hermes_shadow_log_redacts_response_body)
+check("hermes_shadow(error_redaction)", check_hermes_error_redaction)
 check("disk_space", lambda: fw.tool_disk_space())
 check("open_app(notepad)", lambda: fw.tool_open_app("notepad"))
 check("open_app(blocked-cmd)", check_open_app_blocked)

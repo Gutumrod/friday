@@ -49,6 +49,14 @@ from friday.config import (
     MAILBOX_INBOX_HERMES_DIR,
     TTS_CACHE_DIR,
     LATENCY_LOG_DIR,
+    HERMES_SHADOW_LOG_DIR,
+    FRIDAY_FOR_HERMES_MODE,
+    HERMES_DASHBOARD_URL,
+    HERMES_SYNC_HARD_TIMEOUT_SECONDS,
+    HERMES_CONNECT_TIMEOUT_SECONDS,
+    FRIDAY_CORRELATION_ID_PREFIX,
+    FRIDAY_HERMES_CONTEXT_BUDGET_TOKENS,
+    FRIDAY_HERMES_CONTEXT_POLICY,
     PHRASE_AUDIO_DIR,
     JAITTS_REPO,
     VOICES_DIR,
@@ -62,6 +70,7 @@ from friday.config import (
 from friday import latency as _latency
 from friday import llm as _llm
 from friday import memory as _memory
+from friday import hermes_client as _hermes_client
 from friday.phrases import get_phrase, iter_phrases
 
 # Initialize Pygame Mixer for playing audio
@@ -79,6 +88,34 @@ mic_listening = threading.Event()
 # responding).
 STT_WARNING_THRESHOLD = 3
 _stt_consecutive_failures = 0
+
+_hermes_shadow_client = _hermes_client.HermesDashboardClient(
+    _hermes_client.HermesConfig(
+        dashboard_url=HERMES_DASHBOARD_URL,
+        connect_timeout_seconds=HERMES_CONNECT_TIMEOUT_SECONDS,
+        hard_timeout_seconds=HERMES_SYNC_HARD_TIMEOUT_SECONDS,
+        context_budget_tokens=FRIDAY_HERMES_CONTEXT_BUDGET_TOKENS,
+        context_policy=FRIDAY_HERMES_CONTEXT_POLICY,
+        shadow_log_dir=HERMES_SHADOW_LOG_DIR,
+    )
+)
+
+
+def maybe_shadow_hermes_user_text(user_text):
+    if FRIDAY_FOR_HERMES_MODE != "shadow":
+        return None
+    correlation_id = _hermes_client.make_correlation_id(FRIDAY_CORRELATION_ID_PREFIX)
+    try:
+        _hermes_client.schedule_shadow_request(
+            _hermes_shadow_client,
+            user_text,
+            correlation_id=correlation_id,
+        )
+        _latency.record("hermes_shadow_scheduled", correlation_id=correlation_id, mode=FRIDAY_FOR_HERMES_MODE)
+        return correlation_id
+    except Exception as e:
+        _latency.record("hermes_shadow_schedule_error", error=str(e), mode=FRIDAY_FOR_HERMES_MODE)
+        return None
 
 def remove_emojis(text):
     """Strip emojis and non-standard symbols to prevent edge-tts from reading them."""
@@ -1764,6 +1801,7 @@ def main():
 
             history.append({"role": "user", "content": user_input})
             log_to_vault("user", user_input)
+            maybe_shadow_hermes_user_text(user_input)
 
             # 2. Think
             with _latency.span("llm"):
