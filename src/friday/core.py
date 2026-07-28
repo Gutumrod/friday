@@ -35,6 +35,7 @@ from friday.config import (
     VOICE_NAME,
     JARVIS_VOICE,
     SLOW_WARNING_MESSAGE,
+    TTS_PRIMARY,
     DEVICE_INDEX,
     CAMERA_INDEX,
     TV_IP,
@@ -44,8 +45,6 @@ from friday.config import (
     TV_BROADCAST_IP,
     TV_BOOT_WAIT,
     MAILBOX_DIR,
-    DISPATCH_TO_HERMES_TIMEOUT,
-    DISPATCH_TO_HERMES_POLL_INTERVAL,
     MAILBOX_INBOX_HERMES_DIR,
     TTS_CACHE_DIR,
     LATENCY_LOG_DIR,
@@ -81,6 +80,52 @@ pygame.mixer.init()
 # pygame channel) and stop Friday from talking into her own live mic.
 AUDIO_LOCK = threading.Lock()
 mic_listening = threading.Event()
+PENDING_HERMES_JOBS_PATH = os.path.join(VAULT_DIR, "pending_hermes_jobs.json")
+
+def _load_pending_hermes_jobs():
+    try:
+        with open(PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+def _save_pending_hermes_jobs(jobs):
+    os.makedirs(VAULT_DIR, exist_ok=True)
+    temp = PENDING_HERMES_JOBS_PATH + ".tmp"
+    with open(temp, "w", encoding="utf-8") as f:
+        json.dump(jobs, f, ensure_ascii=False, indent=2)
+    os.replace(temp, PENDING_HERMES_JOBS_PATH)
+
+def _hermes_result_candidates(task_id):
+    return (
+        (os.path.join(MAILBOX_DIR, "results", "hermes", task_id, "result.json"), False),
+        (os.path.join(MAILBOX_DIR, "errors", "hermes", task_id, "result.json"), True),
+    )
+
+def deliver_pending_hermes_result():
+    """Read at most one completed mailbox result without ever waiting for Hermes."""
+    if mic_listening.is_set() or pygame.mixer.music.get_busy():
+        return False
+
+    jobs = _load_pending_hermes_jobs()
+    for job in jobs[:]:
+        task_id = job.get("task_id")
+        if not task_id:
+            continue
+        for path, is_error in _hermes_result_candidates(task_id):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            text = data.get("error") if is_error else data.get("result")
+            title = job.get("title") or task_id
+            speak(f"Hermes ทำงาน '{title}' เสร็จแล้วค่ะ {text or ''}".strip())
+            jobs.remove(job)
+            _save_pending_hermes_jobs(jobs)
+            return True
+    return False
 
 # B2 (audit, 2026-07-02): listen_mic() used to fail silently forever on STT network/API
 # errors — speak up once every STT_WARNING_THRESHOLD consecutive hard failures instead of
@@ -144,6 +189,13 @@ async def generate_speech(text, voice=None):
 JAITTS_NFE_STEP = 8
 
 _jaitts_engine = None
+
+LISTEN_START_BEEP = (1047, 120)
+LISTEN_CAPTURED_BEEP = (660, 90)
+LISTEN_START_TIMEOUT_SECONDS = 10
+LISTEN_PHRASE_TIME_LIMIT_SECONDS = 15
+LISTEN_PAUSE_THRESHOLD_SECONDS = 0.8
+LISTEN_PHRASE_LIMIT_MARGIN_SECONDS = 0.35
 
 _THAI_DIGIT_WORDS = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"]
 _THAI_MONTH_NAMES = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -261,6 +313,20 @@ def warm_up_jaitts_background():
 def _phrase_audio_path(phrase):
     return os.path.join(PHRASE_AUDIO_DIR, phrase["id"] + ".wav")
 
+def _cue_tone(tone):
+    """Best-effort earcon for voice-only UX; console/headless runs should not fail on it."""
+    try:
+        winsound.Beep(*tone)
+    except Exception as e:
+        print(f"⚠️ Cue tone failed: {e}")
+
+def _infer_listen_end_reason(elapsed_seconds):
+    if elapsed_seconds is None:
+        return "unknown"
+    if elapsed_seconds >= LISTEN_PHRASE_TIME_LIMIT_SECONDS - LISTEN_PHRASE_LIMIT_MARGIN_SECONDS:
+        return "phrase_time_limit"
+    return "pause_or_silence"
+
 def ensure_phrase_audio(phrase):
     os.makedirs(PHRASE_AUDIO_DIR, exist_ok=True)
     audio_file = _phrase_audio_path(phrase)
@@ -290,8 +356,6 @@ def speak_phrase(category, phrase_id=None):
     print(f"👩‍💼 Friday: {phrase['text']}")
     audio_file = _phrase_audio_path(phrase)
     if not os.path.exists(audio_file) or os.path.getsize(audio_file) <= 0:
-        audio_file = ensure_phrase_audio(phrase)
-    if not audio_file:
         speak(phrase["text"])
         return phrase["text"]
 
@@ -315,10 +379,7 @@ def speak_phrase(category, phrase_id=None):
     return phrase["text"]
 
 def speak(text, voice=None):
-    """Print the text and play it as voice, then clean up the file. JaiTTS (local, GPU) is the
-    primary voice as of 2026-07-04 — edge-tts is now only the fallback, and only reachable via
-    an explicit voice= override (e.g. the male "Jarvis" cloud-slow warning), since JaiTTS clones
-    a single fixed reference voice and can't produce a second one on demand."""
+    """Print the text and play it as voice, then clean up the temporary audio file."""
     print(f"👩‍💼 Friday: {text}")
     explicit_voice = voice is not None
     voice = voice or VOICE_NAME
@@ -339,7 +400,9 @@ def speak(text, voice=None):
     with AUDIO_LOCK:
         # 0. Skip generation entirely if we've already synthesized this exact text+voice before
         # (e.g. the fixed CONFIRM_GATED question/cancel phrases repeat verbatim every time).
-        cache_key = hashlib.md5(f"{voice}:{clean_text}".encode("utf-8")).hexdigest()
+        # Include the selected engine so the same text cannot reuse audio generated by a
+        # different voice path after the owner switches TTS mode.
+        cache_key = hashlib.md5(f"{TTS_PRIMARY}:{voice}:{clean_text}".encode("utf-8")).hexdigest()
         cached_file = next(
             (p for ext in (".mp3", ".wav")
              if os.path.exists(p := os.path.join(TTS_CACHE_DIR, cache_key + ext))),
@@ -349,9 +412,9 @@ def speak(text, voice=None):
         if cached_file:
             audio_file = cached_file
             _latency.set_metric("cache_hit", True)
-        # 1. JaiTTS (local, GPU) is primary since 2026-07-04. edge-tts only runs when a
-        # specific non-default voice was requested (JaiTTS can't do that), or as a fallback
-        # if JaiTTS itself fails (model/GPU error) so Friday never goes fully silent (B3).
+        # 1. Use the configured primary voice path. Live testing on 2026-07-28 showed JaiTTS
+        # can fail repeatedly on this machine before falling back, so Edge is the fast default;
+        # JaiTTS remains available via FRIDAY_TTS_PRIMARY=jaitts and as an offline fallback.
         elif explicit_voice:
             _latency.set_metric("cache_hit", False)
             with _latency.span("tts_generation"):
@@ -364,6 +427,24 @@ def speak(text, voice=None):
             if not success:
                 print("❌ Edge-TTS failed after 3 attempts for the requested voice — Friday cannot speak this turn.")
                 return
+        elif TTS_PRIMARY != "jaitts":
+            _latency.set_metric("cache_hit", False)
+            with _latency.span("tts_generation"):
+                try:
+                    success = asyncio.run(generate_speech(clean_text, voice=voice))
+                except Exception as e:
+                    print(f"❌ Error generating TTS: {e}")
+                    success = False
+            if success:
+                audio_file = TEMP_AUDIO_FILE
+            else:
+                print("⚠️ Edge-TTS failed — trying local JaiTTS fallback instead.")
+                with _latency.span("tts_fallback_generation"):
+                    fallback_success = generate_speech_fallback(clean_text)
+                audio_file = TEMP_AUDIO_FILE_FALLBACK
+                if not fallback_success:
+                    print("❌ JaiTTS fallback also failed — Friday cannot speak this turn.")
+                    return
         else:
             _latency.set_metric("cache_hit", False)
             with _latency.span("tts_generation"):
@@ -483,19 +564,47 @@ def listen_mic(r):
     hard_failure = False
     # Cue tone so the user knows exactly when to start talking. Blocking call, played before
     # the mic opens (not after) so its own sound can't bleed into r.listen()'s capture.
-    winsound.Beep(880, 150)
+    _cue_tone(LISTEN_START_BEEP)
     with sr.Microphone(device_index=DEVICE_INDEX) as source:
         print("\n🎤 Friday: กำลังฟัง... (พูดคำสั่งของคุณได้เลยค่ะ)")
+        _latency.record(
+            "listen_started",
+            timeout_seconds=LISTEN_START_TIMEOUT_SECONDS,
+            phrase_time_limit_seconds=LISTEN_PHRASE_TIME_LIMIT_SECONDS,
+            pause_threshold_seconds=getattr(r, "pause_threshold", None),
+            energy_threshold=getattr(r, "energy_threshold", None),
+            dynamic_energy_threshold=getattr(r, "dynamic_energy_threshold", None),
+        )
         mic_listening.set()
         try:
+            listen_started = time.perf_counter()
             with _latency.span("listen"):
-                audio = r.listen(source, timeout=10, phrase_time_limit=15)
+                audio = r.listen(
+                    source,
+                    timeout=LISTEN_START_TIMEOUT_SECONDS,
+                    phrase_time_limit=LISTEN_PHRASE_TIME_LIMIT_SECONDS,
+                )
+            listen_elapsed_seconds = time.perf_counter() - listen_started
+            listen_end_reason = _infer_listen_end_reason(listen_elapsed_seconds)
             _latency.mark("listen_done")
+            _latency.set_metric("listen_end_reason", listen_end_reason)
+            _latency.set_metric("listen_phrase_time_limit_hit", listen_end_reason == "phrase_time_limit")
+            _latency.record(
+                "listen_captured",
+                end_reason=listen_end_reason,
+                elapsed_ms=round(listen_elapsed_seconds * 1000, 1),
+            )
+            _cue_tone(LISTEN_CAPTURED_BEEP)
+            print("🧠 Friday: รับเสียงแล้ว กำลังคิดค่ะ...")
         except sr.WaitTimeoutError:
-            _latency.record("listen_timeout")
+            _latency.set_metric("listen_end_reason", "wait_timeout")
+            _latency.set_metric("listen_phrase_time_limit_hit", False)
+            _latency.record("listen_timeout", timeout_seconds=LISTEN_START_TIMEOUT_SECONDS)
             pass
         except Exception as e:
             print(f"❌ Error in STT: {e}")
+            _latency.set_metric("listen_end_reason", "error")
+            _latency.set_metric("listen_phrase_time_limit_hit", False)
             _latency.record("listen_error", error=str(e))
             hard_failure = True
         finally:
@@ -922,15 +1031,10 @@ def tool_cancel_timer(args):
     return f"ยกเลิกไปแล้ว {len(to_cancel)} รายการค่ะ"
 
 def tool_dispatch_to_hermes(args):
-    """Dispatch a task to Hermes via the shared pull-based mailbox (mailbox_utils.py) and
-    block until Hermes completes/fails/blocks it or DISPATCH_TO_HERMES_TIMEOUT runs out —
-    same blocking-poll-with-timeout shape as tool_search_web, per the contract both sides
-    agreed to (see dispatch-to-hermes-contract-2026-07-02.md). ponytail: the contract's
-    proposed Hermes-side ACK/REJECT pre-check (a second round-trip before the real dispatch)
-    was deliberately dropped for v1 — a garbled/incomplete task still surfaces via Hermes's
-    own 'blocked' or 'failed' result, same safety net one round-trip later, without doubling
-    mailbox traffic for every call. Add it if garbled-task dispatches turn out to be common in
-    practice. Args format: 'title|message'."""
+    """Dispatch a task to Hermes via the shared pull-based mailbox without blocking Friday.
+    It creates a mailbox task, persists only bounded task metadata locally, and returns a short
+    acknowledgement immediately. The completed result is announced later from
+    deliver_pending_hermes_result() when Friday is idle. Args format: 'title|message'."""
     parts = args.strip().strip('"').split("|", 1)
     title = parts[0].strip() or "Friday task"
     message = parts[1].strip() if len(parts) > 1 else ""
@@ -949,30 +1053,19 @@ def tool_dispatch_to_hermes(args):
     if not match:
         return f"ส่งงานให้ Hermes ไม่สำเร็จค่ะ: {(proc.stdout + proc.stderr).strip() or 'ไม่ทราบสาเหตุ'}"
     task_id = match.group(1)
-
-    result_path = os.path.join(MAILBOX_DIR, "results", "hermes", task_id, "result.json")
-    error_path = os.path.join(MAILBOX_DIR, "errors", "hermes", task_id, "result.json")
-    deadline = time.time() + DISPATCH_TO_HERMES_TIMEOUT
-    while time.time() < deadline:
-        for path, from_errors in ((result_path, False), (error_path, True)):
-            if not os.path.exists(path):
-                continue
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                continue  # still being written — try again next poll
-            if from_errors or data.get("status") == "failed":
-                return f"Hermes ทำงานไม่สำเร็จค่ะ: {data.get('error') or data.get('result') or 'ไม่ทราบสาเหตุ'}"
-            if data.get("status") == "blocked":
-                return f"Hermes ขอข้อมูลเพิ่มค่ะ: {data.get('result', '')}"
-            return data.get("result") or "Hermes ทำงานเสร็จแล้วค่ะ"
-        time.sleep(DISPATCH_TO_HERMES_POLL_INTERVAL)
-    return f"Hermes ยังทำงานไม่เสร็จภายในเวลาที่รอค่ะ (task_id: {task_id}) เดี๋ยวเช็คผลให้ทีหลังนะคะ"
+    jobs = [job for job in _load_pending_hermes_jobs() if job.get("task_id") != task_id]
+    jobs.append({
+        "task_id": task_id,
+        "title": title,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+    })
+    _save_pending_hermes_jobs(jobs)
+    return f"ส่งงาน '{title}' ให้ Hermes แล้วค่ะ คุยต่อได้เลยนะคะ"
 
 def tool_notify_hermes(args):
-    """Fire-and-forget notification, distinct from tool_dispatch_to_hermes above (which blocks
-    waiting for a real result). Just drops a file into mailbox/inbox/hermes/ for the n8n
+    """Fire-and-forget notification, distinct from tool_dispatch_to_hermes above (which tracks
+    a result for later delivery). Just drops a file into mailbox/inbox/hermes/ for the n8n
     'FRIDAY Mailbox Notifier' workflow (id Lqfyc8SoWbY1IrIv, see
     docs/N8N_MAILBOX_NOTIFIER_2026-07-03.md) to pick up on its next 5-minute poll, announce via
     Telegram, and move to mailbox/notified/. n8n's current inbox_poll.js only reads the
@@ -1368,14 +1461,14 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "dispatch_to_hermes",
-        "description": "ส่งงานที่ฟรายเดย์ทำเองไม่ได้ (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ, งานที่ซับซ้อนเกินเครื่องมือที่มี) ให้ Hermes ทำผ่านระบบ mailbox แล้วรอผลลัพธ์",
+        "description": "ส่งงานที่ฟรายเดย์ทำเองไม่ได้ (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ, งานที่ซับซ้อนเกินเครื่องมือที่มี) ให้ Hermes ทำผ่านระบบ mailbox แบบเบื้องหลัง ไม่รอผลทันที แล้วฟรายเดย์จะตามผลภายหลัง",
         "parameters": {"type": "object", "properties": {
             "title": {"type": "string", "description": "ชื่องานสั้นๆ"},
             "message": {"type": "string", "description": "รายละเอียดงานให้ Hermes ทำได้ทันทีโดยไม่ต้องถามกลับ ต้องมีครบ 3 อย่าง: เป้าหมาย (ทำอะไร), ผลลัพธ์ที่ต้องการ (ได้อะไร), และไฟล์/โฟลเดอร์ที่เกี่ยวข้อง (ที่ไหน)"},
         }, "required": ["title", "message"]}}},
     {"type": "function", "function": {
         "name": "notify_hermes",
-        "description": "ส่งข้อความแจ้งเตือนแบบไม่รอผลลัพธ์ (fire-and-forget) เข้า Telegram ผ่าน n8n ใช้ตอนแค่อยากแจ้งอะไรบางอย่าง ไม่ต้องรอ Hermes ทำงานหรือตอบกลับ ต่างจาก dispatch_to_hermes ที่รอผลจริง",
+        "description": "ส่งข้อความแจ้งเตือนแบบไม่รอผลลัพธ์ (fire-and-forget) เข้า Telegram ผ่าน n8n ใช้ตอนแค่อยากแจ้งอะไรบางอย่าง ไม่ต้องให้ Hermes ทำงานหรือตอบกลับ",
         "parameters": {"type": "object", "properties": {
             "message": {"type": "string", "description": "ข้อความที่จะแจ้งเตือน (จะไปโผล่ใน Telegram)"},
         }, "required": ["message"]}}},
@@ -1691,7 +1784,8 @@ def build_system_prompt():
         "คุณมีเครื่องมือ (tools) ให้เรียกใช้ผ่านระบบ function-calling โดยตรง เรียกเมื่อจำเป็นเท่านั้น "
         "งานที่ซับซ้อนเกินเครื่องมือที่มี (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ) ให้เรียก dispatch_to_hermes ส่งให้ Hermes ทำแทน "
         "ต้องบอกเป้าหมาย ผลลัพธ์ที่ต้องการ และไฟล์/โฟลเดอร์ที่เกี่ยวข้องให้ครบก่อนเรียก ถ้านายพูดสั้นเกินไป ให้ถามเพิ่ม 1 คำถามก่อน "
-        "ถ้าแค่อยากแจ้งเตือนอะไรบางอย่างเข้า Telegram โดยไม่ต้องรอผลลัพธ์ ให้เรียก notify_hermes แทน (เร็วกว่า ไม่ต้องรอ) "
+        "dispatch_to_hermes จะส่งงานแบบเบื้องหลังและคุยต่อได้ทันที ห้ามพูดเหมือน Hermes ทำเสร็จแล้วจนกว่าจะมีผลกลับมา "
+        "ถ้าแค่อยากแจ้งเตือนอะไรบางอย่างเข้า Telegram โดยไม่ต้องให้ Hermes ทำงานหรือตอบกลับ ให้เรียก notify_hermes แทน "
         "งานอื่นนอกเหนือจากนี้ (สั่งงาน OpenClaw ตรงๆ) ยังทำไม่ได้ ให้ปฏิเสธตรงๆ ว่ายังไม่พร้อมค่ะ\n\n"
         "ข้อควรระวังสำคัญ: เครื่องมือแทบทุกตัว ยกเว้น get_time, disk_space, system_status, network_status, list_processes "
         "(อ่านข้อมูลอย่างเดียว ไม่มีผลจริง) ยังไม่ทำงานจริงทันทีที่คุณเรียกใช้ "
@@ -1714,7 +1808,7 @@ def main():
     # Friday does not feel frozen before saying hello, but still happens before the first
     # listen_mic() call.
     r = sr.Recognizer()
-    r.pause_threshold = 0.8  # รอเงียบเสียง 0.8 วินาทีก่อนส่ง (ค่า default ของ SpeechRecognition — ปรับลดจาก 1.5s เพื่อลด latency, ถ้าโดนตัดกลางประโยคบ่อยให้ปรับขึ้น)
+    r.pause_threshold = LISTEN_PAUSE_THRESHOLD_SECONDS  # รอเงียบเสียงก่อนส่งไป STT; ลดมากไปจะตัดกลางประโยค
 
     system_prompt = build_system_prompt()
     history = [{"role": "system", "content": system_prompt}]
@@ -1725,7 +1819,7 @@ def main():
     print("=" * 60)
     print("👩‍💼 Friday Walkie-Talkie Mode: Active 🤖")
     print(f"LLM Brain: {MODEL_NAME} (Local Ollama)")
-    print(f"Voice Output: {VOICE_NAME} (JaiTTS primary, Edge TTS fallback)")
+    print(f"Voice Output: {VOICE_NAME} ({TTS_PRIMARY} primary)")
     print(f"Session: {session_number} (วันนี้)")
     print("=" * 60)
 
@@ -1748,11 +1842,15 @@ def main():
     r.dynamic_energy_threshold = False
     print("🔊 Friday: ปรับแต่งไมโครโฟนเสร็จสิ้นค่ะ")
     speak_phrase("ready", "ready_listening")
-    warm_up_jaitts_background()
+    if TTS_PRIMARY == "jaitts":
+        warm_up_jaitts_background()
 
     pending_confirm = None  # (tool_name, args) awaiting yes/no confirmation, or None
 
     while True:
+        # Completed Hermes jobs are announced only at an idle boundary; this never polls or
+        # waits inside the voice turn.
+        deliver_pending_hermes_result()
         turn = _latency.begin_turn(LATENCY_LOG_DIR)
         path_type = "unknown"
         turn_error = None

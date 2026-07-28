@@ -1,4 +1,14 @@
-"""ponytail: quick functional check for Friday's [TOOL: ...] handlers. No mic/LLM needed, run standalone."""
+"""ponytail: quick functional check for Friday's [TOOL: ...] handlers.
+
+Run all checks:
+    python src/test_tools.py
+
+Run the stable no-real-world-effects gate:
+    python src/test_tools.py non_live
+
+Run targeted checks by name substring:
+    python src/test_tools.py hermes_shadow
+"""
 import os
 import sys
 import time
@@ -14,9 +24,47 @@ from friday import hermes_client
 from friday.phrases import PHRASE_BANK, get_phrase
 
 results = []
+TEST_FILTERS = [arg.lower() for arg in sys.argv[1:] if arg.strip()]
+NON_LIVE_ALIASES = {"non_live", "non-live", "nonlive", "safe", "stable"}
+LIVE_ALIASES = {"live", "real"}
+GROUP_FILTERS = set(TEST_FILTERS) & (NON_LIVE_ALIASES | LIVE_ALIASES)
+NAME_FILTERS = [arg for arg in TEST_FILTERS if arg not in (NON_LIVE_ALIASES | LIVE_ALIASES)]
+LIVE_OR_EFFECTFUL_CHECK_PATTERNS = (
+    "audio_serialization",
+    "clipboard_roundtrip",
+    "close_app(notepad)",
+    "generate_speech_fallback",
+    "media_control(",
+    "native_tool_calling(live)",
+    "network_status",
+    "open_app(notepad)",
+    "open_web",
+    "remember",
+    "schedule_reminder_task(live)",
+    "search_summary_female_ending_live",
+    "search_web",
+    "set_volume(up)",
+    "set_volume(down)",
+    "speak_falls_back_to_edge_tts",
+    "speak_edge_primary_skips_jaitts",
+    "tts_cache_hit",
+    "voice_jailbreak_resistance_live",
+)
+
+
+def _is_live_or_effectful_check(name):
+    lowered = name.lower()
+    return any(pattern in lowered for pattern in LIVE_OR_EFFECTFUL_CHECK_PATTERNS)
 
 
 def check(name, fn):
+    is_effectful = _is_live_or_effectful_check(name)
+    if GROUP_FILTERS & NON_LIVE_ALIASES and is_effectful:
+        return
+    if GROUP_FILTERS & LIVE_ALIASES and not is_effectful:
+        return
+    if NAME_FILTERS and not any(pattern in name.lower() for pattern in NAME_FILTERS):
+        return
     try:
         out = fn()
         results.append((name, True, out))
@@ -55,6 +103,17 @@ def check_latency_turn_writes_jsonl():
         return f"latency log written: {files[0]}"
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def check_listen_end_reason_inference():
+    if fw._infer_listen_end_reason(0.9) != "pause_or_silence":
+        raise AssertionError("short captured audio should be classified as pause_or_silence")
+    near_limit = fw.LISTEN_PHRASE_TIME_LIMIT_SECONDS - (fw.LISTEN_PHRASE_LIMIT_MARGIN_SECONDS / 2)
+    if fw._infer_listen_end_reason(near_limit) != "phrase_time_limit":
+        raise AssertionError("near phrase_time_limit capture should be classified as phrase_time_limit")
+    if fw._infer_listen_end_reason(None) != "unknown":
+        raise AssertionError("missing elapsed time should be classified as unknown")
+    return "listen end reason inference covers silence, phrase limit, and unknown"
 
 
 def check_phrase_bank_safety_metadata():
@@ -201,6 +260,7 @@ def check_close_app_not_running():
 
 check("get_time", lambda: fw.tool_get_time())
 check("latency_turn_writes_jsonl", check_latency_turn_writes_jsonl)
+check("listen_end_reason_inference", check_listen_end_reason_inference)
 check("phrase_bank_safety_metadata", check_phrase_bank_safety_metadata)
 check("hermes_shadow(default_off)", check_hermes_shadow_default_off)
 check("hermes_shadow(schedule)", check_hermes_shadow_schedule_is_fire_and_forget)
@@ -886,7 +946,9 @@ def check_speak_falls_back_to_edge_tts_when_jaitts_fails():
     orig_primary = fw.generate_speech_fallback
     orig_fallback = fw.generate_speech
     orig_cache_dir = fw.TTS_CACHE_DIR
+    orig_tts_primary = fw.TTS_PRIMARY
     fw.TTS_CACHE_DIR = tempfile.mkdtemp()  # isolate from the real cache, see check_audio_serialization
+    fw.TTS_PRIMARY = "jaitts"
     fw.generate_speech_fallback = fake_generate_speech_fallback_always_fails
     fw.generate_speech = fake_generate_speech
     try:
@@ -894,6 +956,7 @@ def check_speak_falls_back_to_edge_tts_when_jaitts_fails():
     finally:
         fw.generate_speech_fallback = orig_primary
         fw.generate_speech = orig_fallback
+        fw.TTS_PRIMARY = orig_tts_primary
         shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
         fw.TTS_CACHE_DIR = orig_cache_dir
         if os.path.exists(fw.TEMP_AUDIO_FILE):
@@ -904,6 +967,49 @@ def check_speak_falls_back_to_edge_tts_when_jaitts_fails():
     return "edge-tts fallback invoked when JaiTTS (primary) failed, file cleaned up after"
 
 
+def check_speak_edge_primary_skips_jaitts():
+    """2026-07-28 live Friday test found repeated JaiTTS failures before Edge fallback, making
+    every reply feel frozen. Edge is now the default primary path; normal speak() must not touch
+    JaiTTS unless Edge fails or FRIDAY_TTS_PRIMARY=jaitts is explicitly selected."""
+    edge_calls = []
+    jaitts_calls = []
+
+    async def fake_generate_speech(text, voice=None):
+        edge_calls.append((text, voice))
+        with open(fw.TEMP_AUDIO_FILE, "wb") as f:
+            f.write(b"\0")
+        return True
+
+    def fake_generate_speech_fallback(text):
+        jaitts_calls.append(text)
+        return False
+
+    orig_primary = fw.generate_speech_fallback
+    orig_edge = fw.generate_speech
+    orig_cache_dir = fw.TTS_CACHE_DIR
+    orig_tts_primary = fw.TTS_PRIMARY
+    fw.TTS_CACHE_DIR = tempfile.mkdtemp()
+    fw.TTS_PRIMARY = "edge"
+    fw.generate_speech_fallback = fake_generate_speech_fallback
+    fw.generate_speech = fake_generate_speech
+    try:
+        fw.speak("ตอบให้เร็วค่ะ")
+    finally:
+        fw.generate_speech_fallback = orig_primary
+        fw.generate_speech = orig_edge
+        fw.TTS_PRIMARY = orig_tts_primary
+        shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
+        fw.TTS_CACHE_DIR = orig_cache_dir
+        if os.path.exists(fw.TEMP_AUDIO_FILE):
+            os.remove(fw.TEMP_AUDIO_FILE)
+
+    if edge_calls != [("ตอบให้เร็วค่ะ", fw.VOICE_NAME)]:
+        raise AssertionError(f"expected one Edge call with default voice, got: {edge_calls}")
+    if jaitts_calls:
+        raise AssertionError(f"JaiTTS should not be called on Edge-primary success, got: {jaitts_calls}")
+    return "Edge primary spoke without touching JaiTTS"
+
+
 def check_tts_cache_hit_skips_regeneration():
     """A second speak() call with identical text+voice must be served from TTS_CACHE_DIR
     instead of calling generate_speech_fallback (JaiTTS, primary) again — this is what makes
@@ -911,7 +1017,9 @@ def check_tts_cache_hit_skips_regeneration():
     2nd+ occurrence."""
     orig_cache_dir = fw.TTS_CACHE_DIR
     orig_fallback = fw.generate_speech_fallback
+    orig_tts_primary = fw.TTS_PRIMARY
     fw.TTS_CACHE_DIR = tempfile.mkdtemp()
+    fw.TTS_PRIMARY = "jaitts"
     calls = []
 
     def fake_generate_speech_fallback(text):
@@ -926,6 +1034,7 @@ def check_tts_cache_hit_skips_regeneration():
         fw.speak("แคชทดสอบ")
     finally:
         fw.generate_speech_fallback = orig_fallback
+        fw.TTS_PRIMARY = orig_tts_primary
         shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
         fw.TTS_CACHE_DIR = orig_cache_dir
 
@@ -1222,36 +1331,80 @@ def check_recognize_speech_unclear_on_fallback_too():
     return "None returned, both paths tried"
 
 
-def check_dispatch_to_hermes_polls_result():
-    """Mocks the mailbox_utils.py subprocess call + pre-seeds the result.json a real Hermes
-    run would eventually write, to exercise the create->parse-task_id->poll loop without
-    touching the real mailbox or Hermes."""
+def check_dispatch_to_hermes_async_registry():
+    """Backend-only check: dispatch creates a mailbox task and returns immediately, then a
+    later idle pass delivers the result from the durable pending-job registry."""
     tmp_dir = tempfile.mkdtemp()
     orig_mailbox_dir = fw.MAILBOX_DIR
+    orig_pending_path = fw.PENDING_HERMES_JOBS_PATH
     orig_run = fw.subprocess.run
+    orig_speak = fw.speak
     fw.MAILBOX_DIR = tmp_dir
+    fw.PENDING_HERMES_JOBS_PATH = os.path.join(tmp_dir, "pending_hermes_jobs.json")
+    spoken = []
 
     def fake_run(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        if timeout != 15:
+            raise AssertionError(f"dispatch should only wait for mailbox create, got timeout={timeout!r}")
         class FakeProc:
             stdout = "Created: fake_task_1 → inbox/Hermes/\n"
             stderr = ""
         return FakeProc()
 
     fw.subprocess.run = fake_run
+    fw.speak = lambda text, voice=None: spoken.append(text)
     try:
+        start = time.perf_counter()
+        out = fw.tool_dispatch_to_hermes("test title|test message")
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        if elapsed_ms > 500:
+            raise AssertionError(f"dispatch should not wait for Hermes result, took {elapsed_ms:.1f} ms")
+        if "คุยต่อได้เลย" not in out:
+            raise AssertionError(f"expected immediate background acknowledgement, got: {out!r}")
+
+        with open(fw.PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            jobs = json.load(f)
+        if jobs != [{
+            "task_id": "fake_task_1",
+            "title": "test title",
+            "status": "pending",
+            "created_at": jobs[0]["created_at"],
+        }]:
+            raise AssertionError(f"unexpected pending registry: {jobs!r}")
+
         result_dir = os.path.join(tmp_dir, "results", "hermes", "fake_task_1")
         os.makedirs(result_dir, exist_ok=True)
         with open(os.path.join(result_dir, "result.json"), "w", encoding="utf-8") as f:
             f.write('{"status": "completed", "result": "เทสผ่านค่ะ"}')
-        out = fw.tool_dispatch_to_hermes("test title|test message")
+
+        fw.mic_listening.set()
+        try:
+            delivered = fw.deliver_pending_hermes_result()
+        finally:
+            fw.mic_listening.clear()
+        if delivered or spoken:
+            raise AssertionError("completed Hermes result should wait until Friday is idle before speaking")
+        with open(fw.PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            if not json.load(f):
+                raise AssertionError("busy delivery must leave the pending job in the registry")
+
+        delivered = fw.deliver_pending_hermes_result()
+        if not delivered:
+            raise AssertionError("expected completed Hermes result to be delivered on idle pass")
+        if spoken != ["Hermes ทำงาน 'test title' เสร็จแล้วค่ะ เทสผ่านค่ะ"]:
+            raise AssertionError(f"unexpected spoken delivery: {spoken!r}")
+        with open(fw.PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            if json.load(f) != []:
+                raise AssertionError("delivered Hermes job should be removed from pending registry")
     finally:
         fw.subprocess.run = orig_run
+        fw.speak = orig_speak
         fw.MAILBOX_DIR = orig_mailbox_dir
+        fw.PENDING_HERMES_JOBS_PATH = orig_pending_path
+        fw.mic_listening.clear()
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    if out != "เทสผ่านค่ะ":
-        raise AssertionError(f"expected the seeded result.json's 'result' field, got: {out!r}")
-    return "create->parse task_id->poll->return result field: ok"
+    return f"async dispatch returned in {elapsed_ms:.1f} ms, then delivered result on idle pass"
 
 
 def check_dispatch_to_hermes_missing_message_rejected():
@@ -1564,7 +1717,7 @@ def check_tv_play_video_and_remote_button():
 
 check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
 check("should_announce_cancel", check_should_announce_cancel)
-check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
+check("dispatch_to_hermes(async registry)", check_dispatch_to_hermes_async_registry)
 check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
 check("notify_hermes(gate wiring)", check_notify_hermes_gate_wiring)
 check("notify_hermes(missing message rejected)", check_notify_hermes_missing_message_rejected)
@@ -1592,6 +1745,7 @@ check("audio_serialization(speak+speak)", check_audio_serialization)
 check("normalize_numbers_for_tts", check_normalize_numbers_for_tts)
 check("generate_speech_fallback(live, JaiTTS)", check_generate_speech_fallback_live)
 check("speak_falls_back_to_edge_tts_when_jaitts_fails", check_speak_falls_back_to_edge_tts_when_jaitts_fails)
+check("speak_edge_primary_skips_jaitts", check_speak_edge_primary_skips_jaitts)
 check("tts_cache_hit_skips_regeneration", check_tts_cache_hit_skips_regeneration)
 check("mic_listening_default", check_mic_listening_default_clear)
 check("migrate_legacy_day_files", check_migrate_legacy_day_files)
@@ -1607,5 +1761,8 @@ for name, ok, out in results:
     print(f"[{'PASS' if ok else 'FAIL'}] {name}: {out}")
 
 failed = [r for r in results if not r[1]]
+if TEST_FILTERS and not results:
+    print(f"\n0/0 passed (no checks matched filters: {', '.join(TEST_FILTERS)})")
+    sys.exit(2)
 print(f"\n{len(results) - len(failed)}/{len(results)} passed")
 sys.exit(1 if failed else 0)

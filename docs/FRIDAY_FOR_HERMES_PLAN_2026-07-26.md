@@ -677,9 +677,26 @@ Live verified on 2026-07-27:
 - `ask-hermes-pc.mjs` talks to Hermes through dashboard WebSocket `/api/ws` using JSON-RPC methods:
   `session.create` then `prompt.submit`.
 
+Live re-verified on 2026-07-28 from Friday branch `codex/hermes-shadow-targeted-tests`:
+
+- Dashboard was initially down on `127.0.0.1:9119`.
+- Starting `hermes dashboard --port 9119 --host 127.0.0.1 --skip-build --no-open`
+  triggered one recovery web build because `web_dist` was missing, then dashboard became ready.
+- OpenAPI schema version: `3.1.0`; API version: `0.19.0`.
+- Path count observed: `242`, so path count drifted from the 2026-07-27 observation.
+- `/api/health` is not listed in OpenAPI and returned `404` during the Friday probe.
+- `/api/status` and `/api/model/info` are listed in OpenAPI but timed out with Friday's current
+  5s probe timeout.
+- `/api/cron/jobs` returned `200`.
+- WebSocket `/api/ws` smoke succeeded with JSON-RPC `session.create` then `prompt.submit`;
+  response preview was `พร้อมครับ`, TTFB was about `279 ms`, total latency was about `18.7 s`.
+- Evidence file:
+  `audit/hermes_phase0_probe_2026-07-28-runtime.json`
+
 Important correction:
 
 - Do not assume REST `POST /api/chat` exists until a live probe confirms it.
+- Do not assume `/api/health` exists or works; current Friday probe records it as drift if it returns `404`.
 - For Sync Delegation Phase 0, treat dashboard WebSocket prompt submission as the known working chat path candidate.
 - Kanban endpoints in live OpenAPI are under `/api/plugins/kanban/...`, not plain `/api/kanban/...`.
 - Model info endpoint observed in live OpenAPI is `/api/model/info`, not plain `/api/model`.

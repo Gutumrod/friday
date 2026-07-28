@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import threading
 import time
 import uuid
@@ -16,6 +17,9 @@ from urllib.parse import quote, urlparse
 import requests
 import websockets
 
+
+if __package__ in (None, ""):
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 TOKEN_RE = re.compile(r'window\.__HERMES_SESSION_TOKEN__="([^"]+)"|__HERMES_SESSION_TOKEN__="([^"]+)"')
 PROBE_ENDPOINTS = ("/api/health", "/api/status", "/api/model/info", "/api/cron/jobs", "/openapi.json")
@@ -53,11 +57,11 @@ def _now_iso() -> str:
 
 
 def _redact_url(url: str) -> str:
-    return re.sub(r"([?&](?:token|ticket)=)[^&]+", r"\1<redacted>", url)
+    return re.sub(r"([?&](?:token|ticket)=)[^&\s;]+", r"\1<redacted>", url)
 
 
 def _redact_text(text: str) -> str:
-    return _redact_url(text).replace("Bearer ", "Bearer <redacted> ")
+    return re.sub(r"\bBearer\s+[^,\s;]+", "Bearer <redacted>", _redact_url(text))
 
 
 def _jsonl_append(log_dir: str, record: dict[str, Any]) -> str:

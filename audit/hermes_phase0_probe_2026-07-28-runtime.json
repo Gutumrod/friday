@@ -1,0 +1,1814 @@
+{
+  "generated_at": "2026-07-28T18:51:40.794",
+  "dashboard_url": "http://127.0.0.1:9119",
+  "probes": [
+    {
+      "path": "/api/health",
+      "ok": false,
+      "status_code": 404,
+      "latency_ms": 20.2,
+      "content_length": 46,
+      "json_keys": [
+        "detail"
+      ]
+    },
+    {
+      "path": "/api/status",
+      "ok": false,
+      "status_code": null,
+      "latency_ms": 5014.8,
+      "error": "HTTPConnectionPool(host='127.0.0.1', port=9119): Read timed out. (read timeout=5.0)"
+    },
+    {
+      "path": "/api/model/info",
+      "ok": false,
+      "status_code": null,
+      "latency_ms": 5009.0,
+      "error": "HTTPConnectionPool(host='127.0.0.1', port=9119): Read timed out. (read timeout=5.0)"
+    },
+    {
+      "path": "/api/cron/jobs",
+      "ok": true,
+      "status_code": 200,
+      "latency_ms": 144.4,
+      "content_length": 25510,
+      "json_keys": []
+    },
+    {
+      "path": "/openapi.json",
+      "ok": true,
+      "status_code": 200,
+      "latency_ms": 192.3,
+      "content_length": 228887,
+      "json_keys": [
+        "components",
+        "info",
+        "openapi",
+        "paths"
+      ]
+    }
+  ],
+  "manifest": {
+    "generated_at": "2026-07-28T18:51:51.240",
+    "dashboard_url": "http://127.0.0.1:9119",
+    "openapi_version": "3.1.0",
+    "api_version": "0.19.0",
+    "path_count": 242,
+    "manual_runtime_routes": [
+      "/api/ws"
+    ],
+    "paths": {
+      "/api/memory/providers/{provider}/oauth/start": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/memory/providers/{provider}/oauth/status": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/media": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/chat/image-upload": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/files": {
+        "methods": [
+          "DELETE",
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/files/read": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/files/download": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/files/upload": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/files/upload-stream": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/files/mkdir": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/fs/list": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/fs/read-text": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/fs/write-text": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/fs/read-data-url": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/fs/git-root": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/fs/default-cwd": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/status": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/worktrees": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/branches": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/base-branches": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/list": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/diff": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/file-diff": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/commit-context": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/rev-parse": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/ship-info": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/stage": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/unstage": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/revert": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/commit": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/push": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/review/create-pr": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/worktree/add": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/worktree/remove": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/git/branch/switch": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ssh/ownership": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/status": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/system/stats": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/curator": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/curator/paused": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/curator/run": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/learning/graph": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/learning/node": {
+        "methods": [
+          "DELETE",
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/portal": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/prompt-size": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/dump": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/config-migrate": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/debug-share": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/gateway/restart": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/gateway/drain": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/hermes/update": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/hermes/update/check": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/audio/transcribe": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/audio/elevenlabs/voices": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/audio/speak": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/actions/{name}/status": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/sessions": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/sessions/sidebar": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/search": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/memory/providers/{name}/config": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/memory/providers/{name}/setup": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/config": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/config/defaults": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/config/schema": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/model/info": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/model/options": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/model/recommended-default": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/model/auxiliary": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/model/moa": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/model/set": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/env": {
+        "methods": [
+          "DELETE",
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/custom-endpoints": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/custom-endpoints/{endpoint_id}/activate": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/custom-endpoints/{endpoint_id}": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/custom-endpoints/validate": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/validate": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/env/reveal": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/whatsapp/onboarding/start": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/whatsapp/onboarding/{pairing_id}": {
+        "methods": [
+          "DELETE",
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/whatsapp/onboarding/{pairing_id}/apply": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/telegram/onboarding/start": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/telegram/onboarding/{pairing_id}": {
+        "methods": [
+          "DELETE",
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/telegram/onboarding/{pairing_id}/apply": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/platforms": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/platforms/{platform_id}": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/messaging/platforms/{platform_id}/test": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/oauth": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/oauth/{provider_id}": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/oauth/{provider_id}/start": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/oauth/{provider_id}/submit": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/oauth/{provider_id}/poll/{session_id}": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/providers/oauth/sessions/{session_id}": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/bulk-delete": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/import": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/empty/count": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/empty": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/stats": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/{session_id}": {
+        "methods": [
+          "DELETE",
+          "GET",
+          "PATCH"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/{session_id}/latest-descendant": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/{session_id}/messages": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/{session_id}/export": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/sessions/prune": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/logs": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/jobs": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/jobs/{job_id}": {
+        "methods": [
+          "DELETE",
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/jobs/{job_id}/runs": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/delivery-targets": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/jobs/{job_id}/pause": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/jobs/{job_id}/resume": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/jobs/{job_id}/trigger": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/fire": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/blueprints": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/cron/blueprints/instantiate": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/servers": {
+        "methods": [
+          "GET",
+          "POST",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/servers/{name}": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/servers/{name}/test": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/servers/{name}/auth": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/oauth/flows/{flow_id}": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/oauth/callback/{server_name}": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/servers/{name}/enabled": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/catalog": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/mcp/catalog/install": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/pairing": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/pairing/approve": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/pairing/revoke": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/pairing/clear-pending": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/webhooks": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/webhooks/enable": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/webhooks/{name}": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/webhooks/{name}/enabled": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/gateway/start": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/gateway/stop": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/credentials/pool": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/credentials/pool/{provider}/{index}": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/memory": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/memory/provider": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/memory/reset": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/doctor": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/security-audit": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/backup": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/backup/download": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/import": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/import-upload": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/hooks": {
+        "methods": [
+          "DELETE",
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/checkpoints": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ops/checkpoints/prune": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/hub/install": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/hub/uninstall": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/hub/update": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/hub/sources": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/hub/search": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/hub/preview": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/hub/scan": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/active": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/{name}/setup-command": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/{name}/open-terminal": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/{name}": {
+        "methods": [
+          "DELETE",
+          "PATCH"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/{name}/soul": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/{name}/description": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/{name}/model": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/profiles/{name}/describe-auto": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/toggle": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/skills/content": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets/{name}": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets/{name}/config": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets/{name}/models": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets/{name}/model": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets/{name}/provider": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets/{name}/env": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/toolsets/{name}/post-setup": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/terminal/backends": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/terminal/backend": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/computer-use/status": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/tools/computer-use/permissions/grant": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/config/raw": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/analytics/usage": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/analytics/models": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/themes": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/theme": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/font": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/plugins": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/plugins/rescan": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/plugins/hub": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/agent-plugins/install": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/agent-plugins/{name}/enable": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/agent-plugins/{name}/disable": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/agent-plugins/{name}/update": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/agent-plugins/{name}": {
+        "methods": [
+          "DELETE"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/plugin-providers": {
+        "methods": [
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/dashboard/plugins/{name}/visibility": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/dashboard-plugins/{plugin_name}/{file_path}": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/hermes-achievements/achievements": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/hermes-achievements/scan-status": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/hermes-achievements/recent-unlocks": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/hermes-achievements/sessions/{session_id}/badges": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/hermes-achievements/rescan": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/hermes-achievements/reset-state": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/board": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}": {
+        "methods": [
+          "DELETE",
+          "GET",
+          "PATCH"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/attachments": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/attachments/{attachment_id}": {
+        "methods": [
+          "DELETE",
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/comments": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/links": {
+        "methods": [
+          "DELETE",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/bulk": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/diagnostics": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/workers/active": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/runs/{run_id}": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/runs/{run_id}/inspect": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/runs/{run_id}/terminate": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/reclaim": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/specify": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/reassign": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/config": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/home-channels": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/home-subscribe/{platform}": {
+        "methods": [
+          "DELETE",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/stats": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/assignees": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/log": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/dispatch": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/boards": {
+        "methods": [
+          "GET",
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/boards/{slug}": {
+        "methods": [
+          "DELETE",
+          "PATCH"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/boards/{slug}/switch": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/profiles": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/profiles/{profile_name}": {
+        "methods": [
+          "PATCH"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/profiles/{profile_name}/describe-auto": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/tasks/{task_id}/decompose": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/plugins/kanban/orchestration": {
+        "methods": [
+          "GET",
+          "PUT"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/login": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/auth/providers": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/auth/login": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/auth/callback": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/auth/password-login": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/auth/logout": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/auth/me": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/auth/ws-ticket": {
+        "methods": [
+          "POST"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/assets/{filename}.css": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/{full_path}": {
+        "methods": [
+          "GET"
+        ],
+        "source": "openapi",
+        "listed_in_openapi": true
+      },
+      "/api/ws": {
+        "methods": [
+          "WEBSOCKET"
+        ],
+        "source": "manual",
+        "listed_in_openapi": false,
+        "rpc_methods": [
+          "session.create",
+          "prompt.submit"
+        ]
+      }
+    }
+  },
+  "error": null,
+  "auth": {
+    "dashboard_status": 200,
+    "dashboard_latency_ms": 56.3,
+    "token_present": true,
+    "token_length": 43
+  }
+}
