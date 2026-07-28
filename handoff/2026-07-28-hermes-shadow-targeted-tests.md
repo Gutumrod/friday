@@ -2,6 +2,7 @@
 
 วันที่: 2026-07-28
 branch: `codex/hermes-shadow-targeted-tests`
+draft PR: `https://github.com/Gutumrod/friday/pull/1`
 
 ## What Changed
 
@@ -33,6 +34,13 @@ branch: `codex/hermes-shadow-targeted-tests`
 - `/api/status` and `/api/model/info` timed out with current 5s probe timeout
 - `/api/cron/jobs` returned `200`
 - WebSocket smoke succeeded; response preview: `พร้อมครับ`
+
+## GitHub State
+
+- branch pushed: `origin/codex/hermes-shadow-targeted-tests`
+- draft PR opened: `https://github.com/Gutumrod/friday/pull/1`
+- PR base: `master`
+- PR remains draft for owner review/merge
 
 ## Commands That Passed
 
