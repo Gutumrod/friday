@@ -14,9 +14,12 @@ from friday import hermes_client
 from friday.phrases import PHRASE_BANK, get_phrase
 
 results = []
+TEST_FILTERS = [arg.lower() for arg in sys.argv[1:] if arg.strip()]
 
 
 def check(name, fn):
+    if TEST_FILTERS and not any(pattern in name.lower() for pattern in TEST_FILTERS):
+        return
     try:
         out = fn()
         results.append((name, True, out))
@@ -1607,5 +1610,8 @@ for name, ok, out in results:
     print(f"[{'PASS' if ok else 'FAIL'}] {name}: {out}")
 
 failed = [r for r in results if not r[1]]
+if TEST_FILTERS and not results:
+    print(f"\n0/0 passed (no checks matched filters: {', '.join(TEST_FILTERS)})")
+    sys.exit(2)
 print(f"\n{len(results) - len(failed)}/{len(results)} passed")
 sys.exit(1 if failed else 0)

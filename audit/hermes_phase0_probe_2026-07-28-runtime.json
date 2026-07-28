@@ -1,0 +1,7 @@
+{
+  "generated_at": "2026-07-28T18:32:24.458",
+  "dashboard_url": "http://127.0.0.1:9119",
+  "probes": [],
+  "manifest": null,
+  "error": "dashboard_unreachable: HTTPConnectionPool(host='127.0.0.1', port=9119): Max retries exceeded with url: / (Caused by NewConnectionError(\"HTTPConnection(host='127.0.0.1', port=9119): Failed to establish a new connection: [WinError 10061] No connection could be made because the target machine actively refused it\"))"
+}
