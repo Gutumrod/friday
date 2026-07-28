@@ -1319,36 +1319,80 @@ def check_recognize_speech_unclear_on_fallback_too():
     return "None returned, both paths tried"
 
 
-def check_dispatch_to_hermes_polls_result():
-    """Mocks the mailbox_utils.py subprocess call + pre-seeds the result.json a real Hermes
-    run would eventually write, to exercise the create->parse-task_id->poll loop without
-    touching the real mailbox or Hermes."""
+def check_dispatch_to_hermes_async_registry():
+    """Backend-only check: dispatch creates a mailbox task and returns immediately, then a
+    later idle pass delivers the result from the durable pending-job registry."""
     tmp_dir = tempfile.mkdtemp()
     orig_mailbox_dir = fw.MAILBOX_DIR
+    orig_pending_path = fw.PENDING_HERMES_JOBS_PATH
     orig_run = fw.subprocess.run
+    orig_speak = fw.speak
     fw.MAILBOX_DIR = tmp_dir
+    fw.PENDING_HERMES_JOBS_PATH = os.path.join(tmp_dir, "pending_hermes_jobs.json")
+    spoken = []
 
     def fake_run(cmd, cwd=None, capture_output=None, text=None, timeout=None):
+        if timeout != 15:
+            raise AssertionError(f"dispatch should only wait for mailbox create, got timeout={timeout!r}")
         class FakeProc:
             stdout = "Created: fake_task_1 → inbox/Hermes/\n"
             stderr = ""
         return FakeProc()
 
     fw.subprocess.run = fake_run
+    fw.speak = lambda text, voice=None: spoken.append(text)
     try:
+        start = time.perf_counter()
+        out = fw.tool_dispatch_to_hermes("test title|test message")
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        if elapsed_ms > 500:
+            raise AssertionError(f"dispatch should not wait for Hermes result, took {elapsed_ms:.1f} ms")
+        if "คุยต่อได้เลย" not in out:
+            raise AssertionError(f"expected immediate background acknowledgement, got: {out!r}")
+
+        with open(fw.PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            jobs = json.load(f)
+        if jobs != [{
+            "task_id": "fake_task_1",
+            "title": "test title",
+            "status": "pending",
+            "created_at": jobs[0]["created_at"],
+        }]:
+            raise AssertionError(f"unexpected pending registry: {jobs!r}")
+
         result_dir = os.path.join(tmp_dir, "results", "hermes", "fake_task_1")
         os.makedirs(result_dir, exist_ok=True)
         with open(os.path.join(result_dir, "result.json"), "w", encoding="utf-8") as f:
             f.write('{"status": "completed", "result": "เทสผ่านค่ะ"}')
-        out = fw.tool_dispatch_to_hermes("test title|test message")
+
+        fw.mic_listening.set()
+        try:
+            delivered = fw.deliver_pending_hermes_result()
+        finally:
+            fw.mic_listening.clear()
+        if delivered or spoken:
+            raise AssertionError("completed Hermes result should wait until Friday is idle before speaking")
+        with open(fw.PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            if not json.load(f):
+                raise AssertionError("busy delivery must leave the pending job in the registry")
+
+        delivered = fw.deliver_pending_hermes_result()
+        if not delivered:
+            raise AssertionError("expected completed Hermes result to be delivered on idle pass")
+        if spoken != ["Hermes ทำงาน 'test title' เสร็จแล้วค่ะ เทสผ่านค่ะ"]:
+            raise AssertionError(f"unexpected spoken delivery: {spoken!r}")
+        with open(fw.PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            if json.load(f) != []:
+                raise AssertionError("delivered Hermes job should be removed from pending registry")
     finally:
         fw.subprocess.run = orig_run
+        fw.speak = orig_speak
         fw.MAILBOX_DIR = orig_mailbox_dir
+        fw.PENDING_HERMES_JOBS_PATH = orig_pending_path
+        fw.mic_listening.clear()
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    if out != "เทสผ่านค่ะ":
-        raise AssertionError(f"expected the seeded result.json's 'result' field, got: {out!r}")
-    return "create->parse task_id->poll->return result field: ok"
+    return f"async dispatch returned in {elapsed_ms:.1f} ms, then delivered result on idle pass"
 
 
 def check_dispatch_to_hermes_missing_message_rejected():
@@ -1661,7 +1705,7 @@ def check_tv_play_video_and_remote_button():
 
 check("gated_tag_scan(not_first)", check_gated_tag_scan_finds_non_first_gate)
 check("should_announce_cancel", check_should_announce_cancel)
-check("dispatch_to_hermes(polls result)", check_dispatch_to_hermes_polls_result)
+check("dispatch_to_hermes(async registry)", check_dispatch_to_hermes_async_registry)
 check("dispatch_to_hermes(missing message rejected)", check_dispatch_to_hermes_missing_message_rejected)
 check("notify_hermes(gate wiring)", check_notify_hermes_gate_wiring)
 check("notify_hermes(missing message rejected)", check_notify_hermes_missing_message_rejected)

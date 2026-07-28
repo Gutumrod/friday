@@ -45,8 +45,6 @@ from friday.config import (
     TV_BROADCAST_IP,
     TV_BOOT_WAIT,
     MAILBOX_DIR,
-    DISPATCH_TO_HERMES_TIMEOUT,
-    DISPATCH_TO_HERMES_POLL_INTERVAL,
     MAILBOX_INBOX_HERMES_DIR,
     TTS_CACHE_DIR,
     LATENCY_LOG_DIR,
@@ -82,6 +80,52 @@ pygame.mixer.init()
 # pygame channel) and stop Friday from talking into her own live mic.
 AUDIO_LOCK = threading.Lock()
 mic_listening = threading.Event()
+PENDING_HERMES_JOBS_PATH = os.path.join(VAULT_DIR, "pending_hermes_jobs.json")
+
+def _load_pending_hermes_jobs():
+    try:
+        with open(PENDING_HERMES_JOBS_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, json.JSONDecodeError):
+        return []
+
+def _save_pending_hermes_jobs(jobs):
+    os.makedirs(VAULT_DIR, exist_ok=True)
+    temp = PENDING_HERMES_JOBS_PATH + ".tmp"
+    with open(temp, "w", encoding="utf-8") as f:
+        json.dump(jobs, f, ensure_ascii=False, indent=2)
+    os.replace(temp, PENDING_HERMES_JOBS_PATH)
+
+def _hermes_result_candidates(task_id):
+    return (
+        (os.path.join(MAILBOX_DIR, "results", "hermes", task_id, "result.json"), False),
+        (os.path.join(MAILBOX_DIR, "errors", "hermes", task_id, "result.json"), True),
+    )
+
+def deliver_pending_hermes_result():
+    """Read at most one completed mailbox result without ever waiting for Hermes."""
+    if mic_listening.is_set() or pygame.mixer.music.get_busy():
+        return False
+
+    jobs = _load_pending_hermes_jobs()
+    for job in jobs[:]:
+        task_id = job.get("task_id")
+        if not task_id:
+            continue
+        for path, is_error in _hermes_result_candidates(task_id):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except (OSError, json.JSONDecodeError):
+                continue
+            text = data.get("error") if is_error else data.get("result")
+            title = job.get("title") or task_id
+            speak(f"Hermes ทำงาน '{title}' เสร็จแล้วค่ะ {text or ''}".strip())
+            jobs.remove(job)
+            _save_pending_hermes_jobs(jobs)
+            return True
+    return False
 
 # B2 (audit, 2026-07-02): listen_mic() used to fail silently forever on STT network/API
 # errors — speak up once every STT_WARNING_THRESHOLD consecutive hard failures instead of
@@ -324,10 +368,7 @@ def speak_phrase(category, phrase_id=None):
     return phrase["text"]
 
 def speak(text, voice=None):
-    """Print the text and play it as voice, then clean up the file. JaiTTS (local, GPU) is the
-    primary voice as of 2026-07-04 — edge-tts is now only the fallback, and only reachable via
-    an explicit voice= override (e.g. the male "Jarvis" cloud-slow warning), since JaiTTS clones
-    a single fixed reference voice and can't produce a second one on demand."""
+    """Print the text and play it as voice, then clean up the temporary audio file."""
     print(f"👩‍💼 Friday: {text}")
     explicit_voice = voice is not None
     voice = voice or VOICE_NAME
@@ -953,15 +994,10 @@ def tool_cancel_timer(args):
     return f"ยกเลิกไปแล้ว {len(to_cancel)} รายการค่ะ"
 
 def tool_dispatch_to_hermes(args):
-    """Dispatch a task to Hermes via the shared pull-based mailbox (mailbox_utils.py) and
-    block until Hermes completes/fails/blocks it or DISPATCH_TO_HERMES_TIMEOUT runs out —
-    same blocking-poll-with-timeout shape as tool_search_web, per the contract both sides
-    agreed to (see dispatch-to-hermes-contract-2026-07-02.md). ponytail: the contract's
-    proposed Hermes-side ACK/REJECT pre-check (a second round-trip before the real dispatch)
-    was deliberately dropped for v1 — a garbled/incomplete task still surfaces via Hermes's
-    own 'blocked' or 'failed' result, same safety net one round-trip later, without doubling
-    mailbox traffic for every call. Add it if garbled-task dispatches turn out to be common in
-    practice. Args format: 'title|message'."""
+    """Dispatch a task to Hermes via the shared pull-based mailbox without blocking Friday.
+    It creates a mailbox task, persists only bounded task metadata locally, and returns a short
+    acknowledgement immediately. The completed result is announced later from
+    deliver_pending_hermes_result() when Friday is idle. Args format: 'title|message'."""
     parts = args.strip().strip('"').split("|", 1)
     title = parts[0].strip() or "Friday task"
     message = parts[1].strip() if len(parts) > 1 else ""
@@ -980,30 +1016,19 @@ def tool_dispatch_to_hermes(args):
     if not match:
         return f"ส่งงานให้ Hermes ไม่สำเร็จค่ะ: {(proc.stdout + proc.stderr).strip() or 'ไม่ทราบสาเหตุ'}"
     task_id = match.group(1)
-
-    result_path = os.path.join(MAILBOX_DIR, "results", "hermes", task_id, "result.json")
-    error_path = os.path.join(MAILBOX_DIR, "errors", "hermes", task_id, "result.json")
-    deadline = time.time() + DISPATCH_TO_HERMES_TIMEOUT
-    while time.time() < deadline:
-        for path, from_errors in ((result_path, False), (error_path, True)):
-            if not os.path.exists(path):
-                continue
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-            except Exception:
-                continue  # still being written — try again next poll
-            if from_errors or data.get("status") == "failed":
-                return f"Hermes ทำงานไม่สำเร็จค่ะ: {data.get('error') or data.get('result') or 'ไม่ทราบสาเหตุ'}"
-            if data.get("status") == "blocked":
-                return f"Hermes ขอข้อมูลเพิ่มค่ะ: {data.get('result', '')}"
-            return data.get("result") or "Hermes ทำงานเสร็จแล้วค่ะ"
-        time.sleep(DISPATCH_TO_HERMES_POLL_INTERVAL)
-    return f"Hermes ยังทำงานไม่เสร็จภายในเวลาที่รอค่ะ (task_id: {task_id}) เดี๋ยวเช็คผลให้ทีหลังนะคะ"
+    jobs = [job for job in _load_pending_hermes_jobs() if job.get("task_id") != task_id]
+    jobs.append({
+        "task_id": task_id,
+        "title": title,
+        "status": "pending",
+        "created_at": datetime.now().isoformat(),
+    })
+    _save_pending_hermes_jobs(jobs)
+    return f"ส่งงาน '{title}' ให้ Hermes แล้วค่ะ คุยต่อได้เลยนะคะ"
 
 def tool_notify_hermes(args):
-    """Fire-and-forget notification, distinct from tool_dispatch_to_hermes above (which blocks
-    waiting for a real result). Just drops a file into mailbox/inbox/hermes/ for the n8n
+    """Fire-and-forget notification, distinct from tool_dispatch_to_hermes above (which tracks
+    a result for later delivery). Just drops a file into mailbox/inbox/hermes/ for the n8n
     'FRIDAY Mailbox Notifier' workflow (id Lqfyc8SoWbY1IrIv, see
     docs/N8N_MAILBOX_NOTIFIER_2026-07-03.md) to pick up on its next 5-minute poll, announce via
     Telegram, and move to mailbox/notified/. n8n's current inbox_poll.js only reads the
@@ -1399,14 +1424,14 @@ TOOL_SCHEMAS = [
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "dispatch_to_hermes",
-        "description": "ส่งงานที่ฟรายเดย์ทำเองไม่ได้ (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ, งานที่ซับซ้อนเกินเครื่องมือที่มี) ให้ Hermes ทำผ่านระบบ mailbox แล้วรอผลลัพธ์",
+        "description": "ส่งงานที่ฟรายเดย์ทำเองไม่ได้ (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ, งานที่ซับซ้อนเกินเครื่องมือที่มี) ให้ Hermes ทำผ่านระบบ mailbox แบบเบื้องหลัง ไม่รอผลทันที แล้วฟรายเดย์จะตามผลภายหลัง",
         "parameters": {"type": "object", "properties": {
             "title": {"type": "string", "description": "ชื่องานสั้นๆ"},
             "message": {"type": "string", "description": "รายละเอียดงานให้ Hermes ทำได้ทันทีโดยไม่ต้องถามกลับ ต้องมีครบ 3 อย่าง: เป้าหมาย (ทำอะไร), ผลลัพธ์ที่ต้องการ (ได้อะไร), และไฟล์/โฟลเดอร์ที่เกี่ยวข้อง (ที่ไหน)"},
         }, "required": ["title", "message"]}}},
     {"type": "function", "function": {
         "name": "notify_hermes",
-        "description": "ส่งข้อความแจ้งเตือนแบบไม่รอผลลัพธ์ (fire-and-forget) เข้า Telegram ผ่าน n8n ใช้ตอนแค่อยากแจ้งอะไรบางอย่าง ไม่ต้องรอ Hermes ทำงานหรือตอบกลับ ต่างจาก dispatch_to_hermes ที่รอผลจริง",
+        "description": "ส่งข้อความแจ้งเตือนแบบไม่รอผลลัพธ์ (fire-and-forget) เข้า Telegram ผ่าน n8n ใช้ตอนแค่อยากแจ้งอะไรบางอย่าง ไม่ต้องให้ Hermes ทำงานหรือตอบกลับ",
         "parameters": {"type": "object", "properties": {
             "message": {"type": "string", "description": "ข้อความที่จะแจ้งเตือน (จะไปโผล่ใน Telegram)"},
         }, "required": ["message"]}}},
@@ -1722,7 +1747,8 @@ def build_system_prompt():
         "คุณมีเครื่องมือ (tools) ให้เรียกใช้ผ่านระบบ function-calling โดยตรง เรียกเมื่อจำเป็นเท่านั้น "
         "งานที่ซับซ้อนเกินเครื่องมือที่มี (เขียนโค้ด/สคริปต์, ระบบอัตโนมัติ) ให้เรียก dispatch_to_hermes ส่งให้ Hermes ทำแทน "
         "ต้องบอกเป้าหมาย ผลลัพธ์ที่ต้องการ และไฟล์/โฟลเดอร์ที่เกี่ยวข้องให้ครบก่อนเรียก ถ้านายพูดสั้นเกินไป ให้ถามเพิ่ม 1 คำถามก่อน "
-        "ถ้าแค่อยากแจ้งเตือนอะไรบางอย่างเข้า Telegram โดยไม่ต้องรอผลลัพธ์ ให้เรียก notify_hermes แทน (เร็วกว่า ไม่ต้องรอ) "
+        "dispatch_to_hermes จะส่งงานแบบเบื้องหลังและคุยต่อได้ทันที ห้ามพูดเหมือน Hermes ทำเสร็จแล้วจนกว่าจะมีผลกลับมา "
+        "ถ้าแค่อยากแจ้งเตือนอะไรบางอย่างเข้า Telegram โดยไม่ต้องให้ Hermes ทำงานหรือตอบกลับ ให้เรียก notify_hermes แทน "
         "งานอื่นนอกเหนือจากนี้ (สั่งงาน OpenClaw ตรงๆ) ยังทำไม่ได้ ให้ปฏิเสธตรงๆ ว่ายังไม่พร้อมค่ะ\n\n"
         "ข้อควรระวังสำคัญ: เครื่องมือแทบทุกตัว ยกเว้น get_time, disk_space, system_status, network_status, list_processes "
         "(อ่านข้อมูลอย่างเดียว ไม่มีผลจริง) ยังไม่ทำงานจริงทันทีที่คุณเรียกใช้ "
@@ -1785,6 +1811,9 @@ def main():
     pending_confirm = None  # (tool_name, args) awaiting yes/no confirmation, or None
 
     while True:
+        # Completed Hermes jobs are announced only at an idle boundary; this never polls or
+        # waits inside the voice turn.
+        deliver_pending_hermes_result()
         turn = _latency.begin_turn(LATENCY_LOG_DIR)
         path_type = "unknown"
         turn_error = None
