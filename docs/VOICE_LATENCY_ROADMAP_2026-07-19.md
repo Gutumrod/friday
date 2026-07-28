@@ -79,7 +79,7 @@ Target รอบแรก:
 
 ### Phase 0: Baseline Instrumentation
 
-Status: in progress
+Status: done
 
 Objective:
 
@@ -113,7 +113,16 @@ Implementation notes:
 - 2026-07-19: latest validation after TV preflight work:
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py` -> 76/76 passed
   - `C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_api.py` -> 2 tests OK
-- Pending before Phase 0 can be marked `done`: run real voice baseline with 10-20 spoken turns and summarize median/p95 bottlenecks here.
+- 2026-07-29: real Friday live test collected enough spoken-turn evidence to mark Phase 0
+  done for the current Windows setup. `vault/latency/2026-07-29.jsonl` showed the dominant
+  latency source is listen capture/end-of-speech, not Hermes, STT, or TTS:
+  - Pre-TV / quiet-ish rows 2-11: 10 turns, 6 `phrase_time_limit`, 4 `pause_or_silence`,
+    average listen latency about 13.25s.
+  - TV-on rows 12-19: 8 turns, 8 `phrase_time_limit`, 0 `pause_or_silence`, average listen
+    latency about 15.04s.
+  - TV/background audio is strongly supported as a cause after the TV was opened, but the
+    quiet-ish phase also hit phrase limit often enough that mic gain, recognizer threshold,
+    and noise suppression still need diagnosis.
 
 Update requirement when done:
 
@@ -179,6 +188,11 @@ Implementation notes:
   - then starts listening and warms JaiTTS in the background
 - 2026-07-19: TV connection error flow now uses vetted phrase-bank text and fails fast before entering `pywebostv` when the configured TV IP is offline or stale. Commit: `049bc72`.
 - 2026-07-19: current low-risk wins are implemented, but this phase stays `in progress` until Phase 0 has before/after spoken metrics.
+- 2026-07-28: Edge TTS became the default primary voice and cache keys now include the active
+  TTS engine, avoiding stale voice-cache reuse. Hermes dispatch was later moved out of the
+  foreground turn, removing the prior 180s blocking wait from the voice loop.
+- 2026-07-29: low-risk wins are no longer the top bottleneck. The next measurable win is
+  end-of-speech reliability under background audio.
 
 Update requirement when done:
 
@@ -320,7 +334,7 @@ Update requirement when done:
 
 ### Phase 4: Better Turn-Taking / VAD
 
-Status: not started
+Status: in progress
 
 Objective:
 
@@ -328,6 +342,11 @@ Objective:
 
 Candidate work:
 
+- inspect 2026-07-29 live rows by `listen_end_reason`, `energy_threshold`, and TV/background
+  audio condition
+- add a low-risk warning/log when repeated `phrase_time_limit` hits suggest noisy-room capture
+- test Windows/RTX noise suppression and default-device mic setup before hardcoding anything
+- add push-to-talk / hold-to-talk as noisy-room fallback, not default UX
 - ทดลอง VAD/end-of-speech detector
 - เก็บ false-cut และ missed-speech rate จากเสียงจริง
 - เพิ่ม interrupt เฉพาะคำปลอดภัยก่อน เช่น "หยุด", "ยกเลิก", "พอ"
@@ -335,8 +354,20 @@ Candidate work:
 Acceptance criteria:
 
 - ลด `end_of_speech_latency_ms`
+- reduce repeated `phrase_time_limit` hits in TV/background-audio conditions
 - ไม่เพิ่มการตัดกลางคำ
 - ไม่เพิ่ม false trigger จากเสียงลำโพงหรือเสียงรอบข้าง
+
+Implementation notes:
+
+- 2026-07-29: live test after adding `listen_end_reason` instrumentation strongly supported
+  the TV/background audio hypothesis for the TV-on phase: 8/8 post-TV turns hit
+  `phrase_time_limit`.
+- The same test still hit `phrase_time_limit` in 6/10 quiet-ish turns, so the next work should
+  diagnose mic gain, recognizer energy threshold/noise calibration, Windows/RTX noise
+  suppression, and optional VAD/push-to-talk fallback.
+- Do not blindly lower `phrase_time_limit`; the user needs to speak long commands. The goal is
+  reliable end-of-speech detection, not truncation.
 
 Update requirement when done:
 
@@ -415,3 +446,7 @@ Update requirement when decision changes:
 - 2026-07-19: Roadmap status refreshed. Phase 0 and Phase 1 remain `in progress` only because spoken baseline metrics are still pending, not because implementation is missing.
 - 2026-07-26: Reviewed external `JaiTTS_F5TTS_Colab.ipynb` and added Phase 1.5
   for a serious local JaiTTS quality/latency benchmark before changing Friday runtime architecture.
+- 2026-07-29: Live Friday test completed and Friday shut down cleanly by voice command. Phase 0
+  is now done for current Windows baseline. Main bottleneck is listen capture/end-of-speech:
+  TV-on phase hit `phrase_time_limit` 8/8 turns; quiet-ish phase still hit it 6/10 turns.
+  Phase 4 is now the priority path for latency reduction.

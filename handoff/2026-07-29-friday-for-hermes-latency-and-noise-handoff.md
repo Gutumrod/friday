@@ -18,6 +18,7 @@ Latest pushed commits:
 - `6530492 fix: improve Friday voice response cues`
 - `5af374e fix: make Hermes dispatch asynchronous`
 - `33eecdc chore: instrument Friday listen end reasons`
+- `501c400 docs: add Friday latency noise handoff`
 
 สำคัญ:
 
@@ -99,35 +100,64 @@ CEO สังเกตว่าเคสชน 15 วินาทีอาจเ
 
 ## Next Test Recommendation
 
-ทดสอบเสียงจริงแบบสั้น แต่ยังไม่ควรแก้ threshold ก่อนเห็น log:
+Status after live test: done.
 
-1. เทสทีวีปิดหรือเบามาก 5-10 turn
-2. เทสทีวีเปิดตามสภาพใช้งานจริง 5-10 turn
-3. เทียบสัดส่วน:
-   - `listen_end_reason = pause_or_silence`
-   - `listen_end_reason = phrase_time_limit`
-   - `listen_phrase_time_limit_hit = true`
+Friday live test was completed after the main voice call was closed. Friday shut down cleanly
+by voice command. No code edits or commits were made during the live test. One intentional
+real side effect occurred through Friday's confirm gate: the user confirmed a Google Maps/web
+search flow.
+
+Live log inspected:
+
+- `vault/latency/2026-07-29.jsonl`
+
+Phase split based on the user's chat note "ผมเปิดทีวีละ":
+
+- Pre-TV / quiet-ish rows 2-11:
+  - 10 turns
+  - `phrase_time_limit`: 6
+  - `pause_or_silence`: 4
+  - average listen latency: about 13.25 seconds
+- TV-on rows 12-19:
+  - 8 turns
+  - `phrase_time_limit`: 8
+  - `pause_or_silence`: 0
+  - average listen latency: about 15.04 seconds
 
 การแปลผล:
 
-- ถ้า `pause_or_silence` เยอะตอนทีวีปิด แต่ `phrase_time_limit` เยอะตอนทีวีเปิด:
-  - root cause คือ background audio / TV bleed
-- ถ้า `phrase_time_limit` เยอะทั้งสองเคส:
-  - ต้องดู mic gain, energy threshold, noise suppression, หรือ VAD
-- ถ้า `pause_or_silence` เยอะทั้งสองเคส:
-  - listen ไม่ใช่ปัญหาหลักแล้ว ให้กลับไปดู STT/LLM/TTS/path routing
+- TV/background audio hypothesis is strongly supported for the TV-on phase: every post-TV
+  turn hit `phrase_time_limit`.
+- The quiet-ish phase still hit `phrase_time_limit` in 6/10 turns, so the root cause is not
+  only TV. Next diagnosis must include mic gain, recognizer energy threshold/noise
+  calibration, Windows/RTX noise suppression, VAD, or push-to-talk fallback.
+- Friday was conversationally usable and confirm gate worked, but listen capture remains the
+  dominant latency source.
 
-## Candidate Fixes If TV Bleed Is Confirmed
+## Updated Latency Plan
 
-เรียงจาก conservative สำหรับของแจก:
+Priority order for the next session:
 
-1. แนะนำใช้ headset mic / directional mic / Windows noise suppression / RTX Voice เป็น setup guidance
-2. เพิ่ม runtime warning/log เมื่อ `phrase_time_limit` ชนบ่อย เพื่อบอกว่า environment เสียงดัง
-3. เพิ่ม optional noise-profile calibration หรือ VAD เฉพาะเครื่อง
-4. ทำ push-to-talk / hold-to-talk fallback สำหรับห้องเสียงดัง
-5. เฟสใหญ่กว่า: เปลี่ยนเป็น chunked/streaming audio pipeline แทน `SpeechRecognition.listen()` เดิม
+1. Diagnose capture/end-of-speech first
+   - inspect `energy_threshold` and `dynamic_energy_threshold` from the 2026-07-29 live log
+   - compare rows that ended with `pause_or_silence` vs `phrase_time_limit`
+   - decide whether the current calibration/threshold is too permissive for the room
+2. Add a low-risk environment warning
+   - if `listen_phrase_time_limit_hit` repeats in recent turns, log/say a short warning that
+     background audio is preventing end-of-speech detection
+   - do not speak the warning while mic is active
+3. Try conservative mic/noise settings before replacing the pipeline
+   - test Windows/RTX noise suppression and headset/directional mic behavior
+   - keep device selection based on system default for distribution; do not hardcode device IDs
+4. Add optional fallback interaction mode for noisy rooms
+   - push-to-talk or hold-to-talk is acceptable as a fallback, not as the default UX
+5. Only then evaluate VAD/chunked streaming
+   - WebRTC VAD or sounddevice chunk buffer can be tested if SpeechRecognition's
+     `pause_threshold` remains unreliable
+   - acceptance must include false-cut and missed-speech checks, not only lower latency
 
-ยังไม่ควรลด `phrase_time_limit` ทื่อๆ เพราะผู้ใช้ต้องพูดยาวได้ และเป้าหมายคือคุยลื่นแบบใช้งานจริง ไม่ใช่ตัดคำเร็วแต่พัง
+Do not reduce `phrase_time_limit` blindly. The user needs to speak long commands, and the
+product goal is smooth real use, not fast-but-broken truncation.
 
 ## Do Not Reopen Unless Asked
 
