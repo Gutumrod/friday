@@ -46,6 +46,7 @@ LIVE_OR_EFFECTFUL_CHECK_PATTERNS = (
     "set_volume(up)",
     "set_volume(down)",
     "speak_falls_back_to_edge_tts",
+    "speak_edge_primary_skips_jaitts",
     "tts_cache_hit",
     "voice_jailbreak_resistance_live",
 )
@@ -933,7 +934,9 @@ def check_speak_falls_back_to_edge_tts_when_jaitts_fails():
     orig_primary = fw.generate_speech_fallback
     orig_fallback = fw.generate_speech
     orig_cache_dir = fw.TTS_CACHE_DIR
+    orig_tts_primary = fw.TTS_PRIMARY
     fw.TTS_CACHE_DIR = tempfile.mkdtemp()  # isolate from the real cache, see check_audio_serialization
+    fw.TTS_PRIMARY = "jaitts"
     fw.generate_speech_fallback = fake_generate_speech_fallback_always_fails
     fw.generate_speech = fake_generate_speech
     try:
@@ -941,6 +944,7 @@ def check_speak_falls_back_to_edge_tts_when_jaitts_fails():
     finally:
         fw.generate_speech_fallback = orig_primary
         fw.generate_speech = orig_fallback
+        fw.TTS_PRIMARY = orig_tts_primary
         shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
         fw.TTS_CACHE_DIR = orig_cache_dir
         if os.path.exists(fw.TEMP_AUDIO_FILE):
@@ -951,6 +955,49 @@ def check_speak_falls_back_to_edge_tts_when_jaitts_fails():
     return "edge-tts fallback invoked when JaiTTS (primary) failed, file cleaned up after"
 
 
+def check_speak_edge_primary_skips_jaitts():
+    """2026-07-28 live Friday test found repeated JaiTTS failures before Edge fallback, making
+    every reply feel frozen. Edge is now the default primary path; normal speak() must not touch
+    JaiTTS unless Edge fails or FRIDAY_TTS_PRIMARY=jaitts is explicitly selected."""
+    edge_calls = []
+    jaitts_calls = []
+
+    async def fake_generate_speech(text, voice=None):
+        edge_calls.append((text, voice))
+        with open(fw.TEMP_AUDIO_FILE, "wb") as f:
+            f.write(b"\0")
+        return True
+
+    def fake_generate_speech_fallback(text):
+        jaitts_calls.append(text)
+        return False
+
+    orig_primary = fw.generate_speech_fallback
+    orig_edge = fw.generate_speech
+    orig_cache_dir = fw.TTS_CACHE_DIR
+    orig_tts_primary = fw.TTS_PRIMARY
+    fw.TTS_CACHE_DIR = tempfile.mkdtemp()
+    fw.TTS_PRIMARY = "edge"
+    fw.generate_speech_fallback = fake_generate_speech_fallback
+    fw.generate_speech = fake_generate_speech
+    try:
+        fw.speak("ตอบให้เร็วค่ะ")
+    finally:
+        fw.generate_speech_fallback = orig_primary
+        fw.generate_speech = orig_edge
+        fw.TTS_PRIMARY = orig_tts_primary
+        shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
+        fw.TTS_CACHE_DIR = orig_cache_dir
+        if os.path.exists(fw.TEMP_AUDIO_FILE):
+            os.remove(fw.TEMP_AUDIO_FILE)
+
+    if edge_calls != [("ตอบให้เร็วค่ะ", fw.VOICE_NAME)]:
+        raise AssertionError(f"expected one Edge call with default voice, got: {edge_calls}")
+    if jaitts_calls:
+        raise AssertionError(f"JaiTTS should not be called on Edge-primary success, got: {jaitts_calls}")
+    return "Edge primary spoke without touching JaiTTS"
+
+
 def check_tts_cache_hit_skips_regeneration():
     """A second speak() call with identical text+voice must be served from TTS_CACHE_DIR
     instead of calling generate_speech_fallback (JaiTTS, primary) again — this is what makes
@@ -958,7 +1005,9 @@ def check_tts_cache_hit_skips_regeneration():
     2nd+ occurrence."""
     orig_cache_dir = fw.TTS_CACHE_DIR
     orig_fallback = fw.generate_speech_fallback
+    orig_tts_primary = fw.TTS_PRIMARY
     fw.TTS_CACHE_DIR = tempfile.mkdtemp()
+    fw.TTS_PRIMARY = "jaitts"
     calls = []
 
     def fake_generate_speech_fallback(text):
@@ -973,6 +1022,7 @@ def check_tts_cache_hit_skips_regeneration():
         fw.speak("แคชทดสอบ")
     finally:
         fw.generate_speech_fallback = orig_fallback
+        fw.TTS_PRIMARY = orig_tts_primary
         shutil.rmtree(fw.TTS_CACHE_DIR, ignore_errors=True)
         fw.TTS_CACHE_DIR = orig_cache_dir
 
@@ -1639,6 +1689,7 @@ check("audio_serialization(speak+speak)", check_audio_serialization)
 check("normalize_numbers_for_tts", check_normalize_numbers_for_tts)
 check("generate_speech_fallback(live, JaiTTS)", check_generate_speech_fallback_live)
 check("speak_falls_back_to_edge_tts_when_jaitts_fails", check_speak_falls_back_to_edge_tts_when_jaitts_fails)
+check("speak_edge_primary_skips_jaitts", check_speak_edge_primary_skips_jaitts)
 check("tts_cache_hit_skips_regeneration", check_tts_cache_hit_skips_regeneration)
 check("mic_listening_default", check_mic_listening_default_clear)
 check("migrate_legacy_day_files", check_migrate_legacy_day_files)

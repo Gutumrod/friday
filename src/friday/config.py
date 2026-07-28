@@ -33,6 +33,7 @@ TEMP_AUDIO_FILE_FALLBACK = "friday_temp_response_fallback.wav"
 VOICE_NAME = "th-TH-PremwadeeNeural"  # Microsoft Premwadee (Thai Female - Friday)
 JARVIS_VOICE = "th-TH-NiwatNeural"  # Microsoft Niwat (Thai Male) -- used only for the cloud-slow warning below, speak(voice=...)
 SLOW_WARNING_MESSAGE = "ผมจาวิส รายงานครับ ไฟรเดย์กำลังเจอปัญหา รอสักครู่ครับนาย"
+TTS_PRIMARY = os.environ.get("FRIDAY_TTS_PRIMARY", "edge").strip().lower()
 DEVICE_INDEX = None  # ใส่เลข Index ของไมค์ที่ใช้จริง (เช่น 4 สำหรับ HyperX, 1 สำหรับ Razer X) ถ้าเว้น None จะใช้ไมค์หลักของ Windows
 CAMERA_INDEX = 0  # index ของกล้องเว็บแคมที่ใช้จริง (เครื่องนี้มีกล้องเดียว = Razer Kiyo = 0) เครื่องอื่นที่มีหลายตัวอาจไม่ใช่ 0 เช็คด้วย Get-PnpDevice -Class Camera ก่อนเปลี่ยน
 
