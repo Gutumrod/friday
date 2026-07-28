@@ -70,6 +70,10 @@ The current stable rule remains:
   or isolating non-live tests.
 - Hermes dashboard tokens are ephemeral. Never persist or log them.
 - Dashboard/API availability is machine-runtime state. Re-probe before relying on sync behavior.
+- 2026-07-28 live re-probe found Hermes dashboard can be started locally and WebSocket smoke works,
+  but REST endpoint shape has drift:
+  `/api/health` returned `404`, path count was `242`, and `/api/status` plus `/api/model/info`
+  timed out with the current 5s probe timeout.
 - Mac portability is not done. Windows-only parts remain: `ctypes.windll`, PowerShell clipboard,
   Task Scheduler, batch launchers, and JaiTTS/F5-TTS runtime validation.
 - JaiTTS Colab evidence is benchmark/reference only, not a Friday runtime dependency.
@@ -254,4 +258,3 @@ Do Phase A and Phase B together:
 5. write a short evidence report
 
 Do not start `sync`, `tool_intent`, Kanban, or Second Brain integration until this evidence exists and owner approves the next phase.
-

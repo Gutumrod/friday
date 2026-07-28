@@ -36,9 +36,34 @@ C:\Users\Win10\miniconda3\envs\friday\python.exe src\friday\hermes_client.py --p
 Result:
 
 - command executed successfully
-- dashboard at `http://127.0.0.1:9119` was not reachable on this machine at check time
+- first run found dashboard at `http://127.0.0.1:9119` was not reachable on this machine
 - probe failed gracefully and wrote:
   - `audit/hermes_phase0_probe_2026-07-28-runtime.json`
+
+Follow-up live dashboard check:
+
+- started dashboard with:
+  `hermes dashboard --port 9119 --host 127.0.0.1 --skip-build --no-open`
+- `--skip-build` triggered a one-time recovery web build because no `web_dist` existed
+- dashboard became ready on port `9119`
+- probe command then succeeded and updated:
+  - `audit/hermes_phase0_probe_2026-07-28-runtime.json`
+- observed OpenAPI:
+  - OpenAPI schema version: `3.1.0`
+  - API version: `0.19.0`
+  - path count: `242`
+  - `/api/ws` remains a manual runtime route outside OpenAPI
+- observed drift from 2026-07-27 notes:
+  - `/api/health` is not listed in OpenAPI and returned `404`
+  - `/api/status` and `/api/model/info` are listed in OpenAPI but timed out with the current 5s probe timeout
+  - `/api/cron/jobs` returned `200`
+- WebSocket smoke succeeded:
+  - command: `src\friday\hermes_client.py --smoke "ตอบสั้นๆ ว่า Hermes พร้อมไหม"`
+  - result status: `ok`
+  - TTFB: `279.1 ms`
+  - total latency: `18745.5 ms`
+  - response preview: `พร้อมครับ`
+  - token was redacted from the printed WebSocket URL
 
 ## Verification
 
@@ -51,6 +76,8 @@ C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_hermes_shadow.py
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py non_live
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py hermes_shadow
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py dispatch_to_hermes notify_hermes
+C:\Users\Win10\miniconda3\envs\friday\python.exe src\friday\hermes_client.py --probe --write-audit audit\hermes_phase0_probe_2026-07-28-runtime.json
+C:\Users\Win10\miniconda3\envs\friday\python.exe src\friday\hermes_client.py --smoke "ตอบสั้นๆ ว่า Hermes พร้อมไหม"
 ```
 
 Counts:

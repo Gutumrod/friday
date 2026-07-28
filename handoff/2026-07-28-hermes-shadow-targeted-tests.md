@@ -20,7 +20,19 @@ branch: `codex/hermes-shadow-targeted-tests`
 - `audit/HERMES_PHASE0_RUNTIME_CHECK_2026-07-28.md`
   - records verification and runtime probe results
 - `audit/hermes_phase0_probe_2026-07-28-runtime.json`
-  - machine-local probe evidence from dashboard-down state
+  - machine-local probe evidence; initially dashboard-down, then live dashboard probe after local start
+
+## Live Hermes Probe Update
+
+- started dashboard with `hermes dashboard --port 9119 --host 127.0.0.1 --skip-build --no-open`
+- first start had to recovery-build missing `web_dist`
+- port `9119` became reachable
+- `src\friday\hermes_client.py --probe` succeeded and updated runtime JSON
+- observed OpenAPI/API: `3.1.0` / `0.19.0`, path count `242`
+- `/api/health` returned `404`
+- `/api/status` and `/api/model/info` timed out with current 5s probe timeout
+- `/api/cron/jobs` returned `200`
+- WebSocket smoke succeeded; response preview: `พร้อมครับ`
 
 ## Commands That Passed
 
@@ -32,6 +44,7 @@ C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py non_live
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py hermes_shadow
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py dispatch_to_hermes notify_hermes
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\friday\hermes_client.py --probe --write-audit audit\hermes_phase0_probe_2026-07-28-runtime.json
+C:\Users\Win10\miniconda3\envs\friday\python.exe src\friday\hermes_client.py --smoke "ตอบสั้นๆ ว่า Hermes พร้อมไหม"
 ```
 
 ## Stop Line Still Active
