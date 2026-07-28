@@ -192,6 +192,10 @@ _jaitts_engine = None
 
 LISTEN_START_BEEP = (1047, 120)
 LISTEN_CAPTURED_BEEP = (660, 90)
+LISTEN_START_TIMEOUT_SECONDS = 10
+LISTEN_PHRASE_TIME_LIMIT_SECONDS = 15
+LISTEN_PAUSE_THRESHOLD_SECONDS = 0.8
+LISTEN_PHRASE_LIMIT_MARGIN_SECONDS = 0.35
 
 _THAI_DIGIT_WORDS = ["ศูนย์", "หนึ่ง", "สอง", "สาม", "สี่", "ห้า", "หก", "เจ็ด", "แปด", "เก้า"]
 _THAI_MONTH_NAMES = ["", "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
@@ -315,6 +319,13 @@ def _cue_tone(tone):
         winsound.Beep(*tone)
     except Exception as e:
         print(f"⚠️ Cue tone failed: {e}")
+
+def _infer_listen_end_reason(elapsed_seconds):
+    if elapsed_seconds is None:
+        return "unknown"
+    if elapsed_seconds >= LISTEN_PHRASE_TIME_LIMIT_SECONDS - LISTEN_PHRASE_LIMIT_MARGIN_SECONDS:
+        return "phrase_time_limit"
+    return "pause_or_silence"
 
 def ensure_phrase_audio(phrase):
     os.makedirs(PHRASE_AUDIO_DIR, exist_ok=True)
@@ -556,18 +567,44 @@ def listen_mic(r):
     _cue_tone(LISTEN_START_BEEP)
     with sr.Microphone(device_index=DEVICE_INDEX) as source:
         print("\n🎤 Friday: กำลังฟัง... (พูดคำสั่งของคุณได้เลยค่ะ)")
+        _latency.record(
+            "listen_started",
+            timeout_seconds=LISTEN_START_TIMEOUT_SECONDS,
+            phrase_time_limit_seconds=LISTEN_PHRASE_TIME_LIMIT_SECONDS,
+            pause_threshold_seconds=getattr(r, "pause_threshold", None),
+            energy_threshold=getattr(r, "energy_threshold", None),
+            dynamic_energy_threshold=getattr(r, "dynamic_energy_threshold", None),
+        )
         mic_listening.set()
         try:
+            listen_started = time.perf_counter()
             with _latency.span("listen"):
-                audio = r.listen(source, timeout=10, phrase_time_limit=15)
+                audio = r.listen(
+                    source,
+                    timeout=LISTEN_START_TIMEOUT_SECONDS,
+                    phrase_time_limit=LISTEN_PHRASE_TIME_LIMIT_SECONDS,
+                )
+            listen_elapsed_seconds = time.perf_counter() - listen_started
+            listen_end_reason = _infer_listen_end_reason(listen_elapsed_seconds)
             _latency.mark("listen_done")
+            _latency.set_metric("listen_end_reason", listen_end_reason)
+            _latency.set_metric("listen_phrase_time_limit_hit", listen_end_reason == "phrase_time_limit")
+            _latency.record(
+                "listen_captured",
+                end_reason=listen_end_reason,
+                elapsed_ms=round(listen_elapsed_seconds * 1000, 1),
+            )
             _cue_tone(LISTEN_CAPTURED_BEEP)
             print("🧠 Friday: รับเสียงแล้ว กำลังคิดค่ะ...")
         except sr.WaitTimeoutError:
-            _latency.record("listen_timeout")
+            _latency.set_metric("listen_end_reason", "wait_timeout")
+            _latency.set_metric("listen_phrase_time_limit_hit", False)
+            _latency.record("listen_timeout", timeout_seconds=LISTEN_START_TIMEOUT_SECONDS)
             pass
         except Exception as e:
             print(f"❌ Error in STT: {e}")
+            _latency.set_metric("listen_end_reason", "error")
+            _latency.set_metric("listen_phrase_time_limit_hit", False)
             _latency.record("listen_error", error=str(e))
             hard_failure = True
         finally:
@@ -1771,7 +1808,7 @@ def main():
     # Friday does not feel frozen before saying hello, but still happens before the first
     # listen_mic() call.
     r = sr.Recognizer()
-    r.pause_threshold = 0.8  # รอเงียบเสียง 0.8 วินาทีก่อนส่ง (ค่า default ของ SpeechRecognition — ปรับลดจาก 1.5s เพื่อลด latency, ถ้าโดนตัดกลางประโยคบ่อยให้ปรับขึ้น)
+    r.pause_threshold = LISTEN_PAUSE_THRESHOLD_SECONDS  # รอเงียบเสียงก่อนส่งไป STT; ลดมากไปจะตัดกลางประโยค
 
     system_prompt = build_system_prompt()
     history = [{"role": "system", "content": system_prompt}]

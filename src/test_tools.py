@@ -105,6 +105,17 @@ def check_latency_turn_writes_jsonl():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def check_listen_end_reason_inference():
+    if fw._infer_listen_end_reason(0.9) != "pause_or_silence":
+        raise AssertionError("short captured audio should be classified as pause_or_silence")
+    near_limit = fw.LISTEN_PHRASE_TIME_LIMIT_SECONDS - (fw.LISTEN_PHRASE_LIMIT_MARGIN_SECONDS / 2)
+    if fw._infer_listen_end_reason(near_limit) != "phrase_time_limit":
+        raise AssertionError("near phrase_time_limit capture should be classified as phrase_time_limit")
+    if fw._infer_listen_end_reason(None) != "unknown":
+        raise AssertionError("missing elapsed time should be classified as unknown")
+    return "listen end reason inference covers silence, phrase limit, and unknown"
+
+
 def check_phrase_bank_safety_metadata():
     for phrase in PHRASE_BANK["confirm_suffix"]:
         if not phrase["requires_action_context"] or phrase["safe_before_action"]:
@@ -249,6 +260,7 @@ def check_close_app_not_running():
 
 check("get_time", lambda: fw.tool_get_time())
 check("latency_turn_writes_jsonl", check_latency_turn_writes_jsonl)
+check("listen_end_reason_inference", check_listen_end_reason_inference)
 check("phrase_bank_safety_metadata", check_phrase_bank_safety_metadata)
 check("hermes_shadow(default_off)", check_hermes_shadow_default_off)
 check("hermes_shadow(schedule)", check_hermes_shadow_schedule_is_fire_and_forget)

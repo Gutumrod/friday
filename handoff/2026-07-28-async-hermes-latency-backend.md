@@ -22,10 +22,13 @@ voice validation before tuning thresholds.
   - delivery now leaves the job pending if Friday is listening or audio is busy
   - updated tool schema and system prompt so Friday treats Hermes as background work, not an
     immediate completion
+  - added listen-end instrumentation so future live runs can tell whether capture ended by
+    pause/silence or by hitting the phrase-time limit
 - `src/test_tools.py`
   - replaced the old blocking-poll expectation with a backend-only async registry regression
   - test confirms dispatch returns quickly, keeps a pending job, does not deliver while busy,
     then delivers and removes the job when idle
+  - added backend-only inference coverage for listen end reasons
 
 ## Backend Latency Result
 
