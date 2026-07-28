@@ -15,6 +15,8 @@ branch: `codex/hermes-shadow-targeted-tests`
   - dedicated non-live Hermes shadow safety gate
   - covers exact shadow mode, fire-and-forget scheduling, daemon thread contract,
     metadata-only shadow logs, and token/Bearer redaction
+- `docs/FRIDAY_TESTING.md`
+  - documents stable non-live gate, targeted gates, live/effectful checks, and Hermes probe
 - `audit/HERMES_PHASE0_RUNTIME_CHECK_2026-07-28.md`
   - records verification and runtime probe results
 - `audit/hermes_phase0_probe_2026-07-28-runtime.json`
@@ -26,6 +28,7 @@ branch: `codex/hermes-shadow-targeted-tests`
 C:\Users\Win10\miniconda3\envs\friday\python.exe -m py_compile src\friday\hermes_client.py src\friday\core.py src\friday\config.py src\test_api.py src\test_tools.py
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_api.py
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_hermes_shadow.py
+C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py non_live
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py hermes_shadow
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py dispatch_to_hermes notify_hermes
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\friday\hermes_client.py --probe --write-audit audit\hermes_phase0_probe_2026-07-28-runtime.json

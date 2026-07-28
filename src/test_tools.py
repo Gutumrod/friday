@@ -1,4 +1,14 @@
-"""ponytail: quick functional check for Friday's [TOOL: ...] handlers. No mic/LLM needed, run standalone."""
+"""ponytail: quick functional check for Friday's [TOOL: ...] handlers.
+
+Run all checks:
+    python src/test_tools.py
+
+Run the stable no-real-world-effects gate:
+    python src/test_tools.py non_live
+
+Run targeted checks by name substring:
+    python src/test_tools.py hermes_shadow
+"""
 import os
 import sys
 import time
@@ -15,10 +25,44 @@ from friday.phrases import PHRASE_BANK, get_phrase
 
 results = []
 TEST_FILTERS = [arg.lower() for arg in sys.argv[1:] if arg.strip()]
+NON_LIVE_ALIASES = {"non_live", "non-live", "nonlive", "safe", "stable"}
+LIVE_ALIASES = {"live", "real"}
+GROUP_FILTERS = set(TEST_FILTERS) & (NON_LIVE_ALIASES | LIVE_ALIASES)
+NAME_FILTERS = [arg for arg in TEST_FILTERS if arg not in (NON_LIVE_ALIASES | LIVE_ALIASES)]
+LIVE_OR_EFFECTFUL_CHECK_PATTERNS = (
+    "audio_serialization",
+    "clipboard_roundtrip",
+    "close_app(notepad)",
+    "generate_speech_fallback",
+    "media_control(",
+    "native_tool_calling(live)",
+    "network_status",
+    "open_app(notepad)",
+    "open_web",
+    "remember",
+    "schedule_reminder_task(live)",
+    "search_summary_female_ending_live",
+    "search_web",
+    "set_volume(up)",
+    "set_volume(down)",
+    "speak_falls_back_to_edge_tts",
+    "tts_cache_hit",
+    "voice_jailbreak_resistance_live",
+)
+
+
+def _is_live_or_effectful_check(name):
+    lowered = name.lower()
+    return any(pattern in lowered for pattern in LIVE_OR_EFFECTFUL_CHECK_PATTERNS)
 
 
 def check(name, fn):
-    if TEST_FILTERS and not any(pattern in name.lower() for pattern in TEST_FILTERS):
+    is_effectful = _is_live_or_effectful_check(name)
+    if GROUP_FILTERS & NON_LIVE_ALIASES and is_effectful:
+        return
+    if GROUP_FILTERS & LIVE_ALIASES and not is_effectful:
+        return
+    if NAME_FILTERS and not any(pattern in name.lower() for pattern in NAME_FILTERS):
         return
     try:
         out = fn()

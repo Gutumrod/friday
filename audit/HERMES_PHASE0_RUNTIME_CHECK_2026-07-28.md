@@ -23,6 +23,7 @@ branch: `codex/hermes-shadow-targeted-tests`
   With no args it keeps the old full-suite behavior. With args it runs matching checks only,
   e.g. `src\test_tools.py hermes_shadow`.
 - Added dedicated targeted gate `src/test_hermes_shadow.py` for non-live Hermes shadow checks.
+- Added `docs/FRIDAY_TESTING.md` as the current testing command guide.
 
 ## Runtime Probe
 
@@ -47,6 +48,7 @@ Passed:
 C:\Users\Win10\miniconda3\envs\friday\python.exe -m py_compile src\friday\hermes_client.py src\friday\core.py src\friday\config.py src\test_api.py src\test_tools.py
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_api.py
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_hermes_shadow.py
+C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py non_live
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py hermes_shadow
 C:\Users\Win10\miniconda3\envs\friday\python.exe src\test_tools.py dispatch_to_hermes notify_hermes
 ```
@@ -55,6 +57,7 @@ Counts:
 
 - `src/test_api.py`: 2/2 passed
 - `src/test_hermes_shadow.py`: 7/7 passed
+- `src/test_tools.py non_live`: 55/55 passed
 - `src/test_tools.py hermes_shadow`: 4/4 passed
 - `src/test_tools.py dispatch_to_hermes notify_hermes`: 5/5 passed
 
