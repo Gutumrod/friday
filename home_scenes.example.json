@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "scenes": [
+    {
+      "id": "returning_home",
+      "aliases": ["กำลังกลับบ้าน", "กลับบ้าน", "returning home"],
+      "entity_id": "scene.returning_home",
+      "description": "Home Assistant owns the actual pre-cooling/lights sequence"
+    },
+    {
+      "id": "bedtime",
+      "aliases": ["เข้านอน", "ก่อนนอน", "bedtime"],
+      "entity_id": "scene.bedtime",
+      "description": "Home Assistant owns the actual bedtime sequence"
+    },
+    {
+      "id": "away_mode",
+      "aliases": ["ออกจากบ้าน", "ไม่อยู่บ้าน", "away mode"],
+      "entity_id": "scene.away_mode",
+      "description": "Home Assistant owns the actual away-state sequence"
+    }
+  ]
+}
