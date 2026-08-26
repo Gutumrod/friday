@@ -11,6 +11,7 @@ if __name__ == "__main__":
     from friday.home_assistant_runtime import install_home_assistant_read_tools
     from friday.home_control_runtime import install_home_control_tools
     from friday.home_device_runtime import install_home_device_read_tools
+    from friday.home_scene_runtime import install_home_scene_tools
     from friday.runtime_security import apply_runtime_security
     from friday.stt.runtime import install_stt_provider
 
@@ -19,6 +20,7 @@ if __name__ == "__main__":
     ha_client = install_home_assistant_read_tools(_core)
     home_registry = install_home_device_read_tools(_core, client=ha_client)
     install_home_control_tools(_core, client=ha_client, registry=home_registry)
+    install_home_scene_tools(_core, client=ha_client)
     try:
         _core.main()
     except KeyboardInterrupt:
