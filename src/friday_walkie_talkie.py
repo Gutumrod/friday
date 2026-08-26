@@ -8,6 +8,9 @@ import sys
 from friday import core as _core
 
 if __name__ == "__main__":
+    from friday.runtime_security import apply_runtime_security
+
+    apply_runtime_security(_core)
     try:
         _core.main()
     except KeyboardInterrupt:
