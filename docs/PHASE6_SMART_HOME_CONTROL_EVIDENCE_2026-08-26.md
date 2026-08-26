@@ -18,6 +18,12 @@ Every write request:
 5. asks for owner confirmation
 6. only after confirmation calls Home Assistant `/api/services/<domain>/<service>`
 
+## Command Acknowledgement Semantics
+
+A successful Home Assistant service response means Home Assistant accepted/processed the service call. It does **not** prove that a physical device reached the requested state, especially for one-way transports such as IR.
+
+Therefore Phase 6 tool replies say that Friday **sent the command to Home Assistant** rather than claiming the TV/AC physically changed state. A later integration may report verified state only when a trustworthy entity/sensor actually confirms it.
+
 ## Implemented Write Tools
 
 - `home_device_power` — `turn_on` / `turn_off`
