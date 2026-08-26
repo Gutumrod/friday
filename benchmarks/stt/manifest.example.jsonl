@@ -1,0 +1,5 @@
+{"id":"thai-001","audio":"audio/thai-001.wav","expected":"วันนี้อากาศเป็นยังไงบ้าง","category":"thai_general"}
+{"id":"code-001","audio":"audio/code-001.wav","expected":"Friday เปิด YouTube ให้หน่อย","category":"thai_english","required_terms":["Friday","เปิด","YouTube"]}
+{"id":"home-001","audio":"audio/home-001.wav","expected":"เปิดทีวีให้หน่อย","category":"home_command","required_terms":["เปิด","ทีวี"]}
+{"id":"home-002","audio":"audio/home-002.wav","expected":"เปิดแอร์ข้างล่างยี่สิบห้าองศาโหมดคูล","category":"home_command","required_terms":["เปิด","แอร์","ยี่สิบห้า","คูล"]}
+{"id":"number-001","audio":"audio/number-001.wav","expected":"ตั้งแอร์ไว้ที่ยี่สิบสี่องศา","category":"numbers_temperature","required_terms":["แอร์","ยี่สิบสี่"]}
