@@ -1,110 +1,201 @@
-# Project Context: Friday AI Assistant
+# Friday Project Context — Current State
 
-**Last Updated:** 2026-07-01 10:50  
-**Current Phase:** Phase 2 (Connecting with Local Tools & Agents)  
-**Progress:** 30%  
-**Next Session:** ดำเนินการเขียนตัวประมวลผลคำสั่งทูล (Tool Parser) ใน Python และเชื่อมเข้ากล่องจดหมาย Hermes Mailbox
+**Last Updated:** 2026-08-26  
+**Repository:** `Gutumrod/friday`  
+**Primary branch:** `master`  
+**Current strategy:** keep `master` stable; prepare work on phase branches, then validate/open PRs/merge when owner machines and hardware are available.
 
----
+## Current Status
 
-## 🎯 สถานะปัจจุบัน
+Friday is no longer in the July 2026 “build a tool parser” stage.
 
-### เสร็จแล้ว (Completed)
-| Phase | Tasks | เสร็จเมื่อ | หมายเหตุ |
-|-------|-------|-----------|----------|
-| Phase 1 | บิ้วด์โครงฐานเสียงโต้ตอบ Walkie-Talkie สำเร็จ | 2026-07-01 | คุยตอบโต้ได้จริง, ไม่เก็บขยะ, เสียงผู้หญิงนุ่มนวล |
-| Phase 1 | แก้ปัญหาอ่านอิโมจิ & ปัญหาตัดเสียงพูดไวเกินไป | 2026-07-01 | เพิ่มฟังก์ชันตัดอิโมจิและเพิ่ม `pause_threshold = 1.5` |
-| Phase 1 | ปรับปรุงความเร็ว Ollama & ความเสถียร TTS | 2026-07-01 | จำกัดบริบทโมเดลให้รันบน GPU 100% และย้ายคาลิเบรตไมค์ไปที่ Startup |
-| Phase 1 | สลับไปใช้โมเดลคลาวด์ตัวเก่ง และระบบปิดตัวเองอัตโนมัติ | 2026-07-01 | ใช้โมเดล `gemma4:31b-cloud` และเพิ่มรหัสสั่งปิดตัว `[SHUTDOWN]` |
+Current verified baseline on `master` already has:
 
-### กำลังทำ (In Progress)
-| Phase | Tasks | เริ่มเมื่อ | คาดว่าเสร็จ |
-|-------|-------|----------|-------------|
-| Phase 2 | ออกแบบ Tool Parser คอยดักข้อความ เช่น `[TOOL: ...]` จากคำตอบ | 2026-07-01 | 2026-07-02 |
-| Phase 2 | เชื่อมโยงระบบส่งงานเข้ากล่องจดหมาย Hermes Mailbox v2 | 2026-07-01 | 2026-07-02 |
+- Windows turn-based voice runtime
+- Google Cloud STT (`th-TH`) with `recognize_google()` fallback on Cloud request failure
+- Ollama native structured function calling
+- `TOOLS` + `TOOL_SCHEMAS`
+- `CONFIRM_GATED` safety boundary
+- local computer tools
+- timers/alarms
+- camera tools
+- LG webOS TV tools
+- vault memory/history
+- JaiTTS as the normal local TTS path, with Edge TTS fallback/explicit alternate voice
+- FastAPI backend and UI event stream
+- Hermes dispatch/notification plus shadow-mode foundation
 
-### ยังไม่ได้ทำ (Pending)
-| Phase | Tasks | Priority | Depends On |
-|-------|-------|----------|------------|
-| Phase 3 | อัปเกรดเป็นโหมดแยกรันขัดจังหวะได้ (Interruptible) | High | Phase 2 |
-| Phase 4 | ออฟไลน์ 100% ด้วย Faster-Whisper ในเครื่อง | Medium | Phase 3 |
+The old `[TOOL: ...]` parser design is obsolete.
 
----
+## Target Architecture
 
-## 📝 Last Session Summary
-
-**Session Date:** 2026-07-01  
-**Model Used:** gemma4:31b-cloud (ผ่าน Local Ollama)
-
-### ทำอะไรเสร็จไปบ้าง
-- ✅ เปลี่ยนบทบาทผู้ช่วยและเสียงเป็น **ฟรายเดย์ (Friday)** เสียงผู้หญิงไทยของระบบคลาวด์ไมโครซอฟท์เสร็จสมบูรณ์
-- ✅ แก้ปัญหาระบบดักฟังตัดคำพูดไวเกินไป และปรับระบบไมโครโฟนให้อิงตาม Default ของ Windows โดยอัตโนมัติ
-- ✅ เพิ่มระบบสู้ชีวิต Retry Loop ให้กับการเรียก API คอนเนกชัน ทั้งของฝั่ง Ollama และ Edge-TTS ทำให้ระบบคุยได้ต่อเนื่องไม่เด้งหลุด
-- ✅ แก้ปัญหาโมเดล Local กินแรมการ์ดจอล้นจนย้ายไปประมวลผลบน CPU ช้าค้างหน่วง โดยจำกัด `num_ctx: 2048` และสลับใช้ `gemma4:31b-cloud` คุยลื่นมากระดับวิจัยคำตอบได้ใน 1.5 วินาที
-- ✅ พัฒนาให้เอไอสามารถคิดและส่งคำสั่งเพื่อปิดตัวเองได้จริง ด้วยการสังเกตคำสั่งปิดผ่านเสียง และส่งแท็กพิเศษ `[SHUTDOWN]` มาสั่งหยุดรันลูปออโต้
-
-### เจอปัญหาอะไร
-- ⚠️ **ปัญหา Edge-TTS Retry Error:** เกิดข้อความ `stream can only be called once` เมื่อพยายามลองใหม่ (Retry)
-  - **วิธีแก้:** แก้ไขโค้ดให้สร้างวัตถุ `edge_tts.Communicate` ขึ้นมาใหม่ทุกรอบที่เข้ารูปแบบ Retry แทนการใช้วัตถุเดิมซ้ำ
-- ⚠️ **ปัญหา Friday จำลองสั่งงานปลอม:** คุยตอบตกลงว่าจะส่งข้อความหา Hermes ใน Telegram ทั้งที่ยังไม่มีการเชื่อมทูลจริงๆ
-  - **วิธีแก้:** บังคับในระบบ Prompt แจ้งความจริงว่าทูลสั่งการภายนอกยังไม่พร้อมในเฟสนี้ และสั่งให้ปฏิเสธการจำลองส่งสารอย่างเด็ดขาด
-
----
-
-## 🚀 Next Steps
-
-### ต้องทำอะไรต่อ (ลำดับความสำคัญ)
-1. **High Priority:**
-   - [ ] ออกแบบและเขียนทูลพาร์สเซอร์สำหรับ Friday เพื่ออ่านและรันคำสั่งพิเศษ
-   - [ ] เขียนโค้ดส่วนเขียนไฟล์ Task JSON v2 ส่งเข้ากล่องจดหมาย `D:\AI-Workspace\mailbox\inbox\hermes\`
-2. **Medium Priority:**
-   - [ ] เพิ่มคำสั่งดึงสถานะพื้นฐานคอมพิวเตอร์ของคุณฟรี (เช่น แบตเตอรี่, เวลาปัจจุบัน, เปิดเบราว์เซอร์)
-3. **Low Priority:**
-   - [ ] ทดสอบความถูกต้องในการคุยโต้ตอบแล้วสั่งระบบสืบค้นงานจริง
-
----
-
-## ❓ Open Questions / Decisions Needed
-
-| คำถาม | ต้องตัดสินใจเมื่อ | Impact |
-|-------|------------------|--------|
-| พี่ต้องการให้รูปแบบคำสั่งที่ส่งไปให้ Hermes ทำงาน ใช้รูปแบบ JSON Task v2 แบบดั้งเดิมเลยใช่ไหม? | เริ่ม Phase 2 | รูปแบบโครงสร้างการอ่านเขียนไฟล์ในโฟลเดอร์ Mailbox |
-
----
-
-## 📁 ไฟล์สำคัญในโปรเจค
-
-| ไฟล์ | Path | หน้าที่ |
-|------|------|--------|
-| **PRD.md** | `D:\AI-Workspace\projects\friday\docs\PRD.md` | MASTER_BLUEPRINT ของโปรเจค |
-| **PROJECT_CONTEXT.md** | `D:\AI-Workspace\projects\friday\docs\PROJECT_CONTEXT.md` | ข้อมูลอัปเดตและ Roadmap ปัจจุบัน |
-| **WALKTHROUGH.md** | `D:\AI-Workspace\projects\friday\docs\WALKTHROUGH.md` | คู่มือรันระบบและการตั้งค่าเสียงเบื้องต้น |
-| **FRIDAY_UI_DESIGN.md** | `D:\AI-Workspace\projects\friday\docs\FRIDAY_UI_DESIGN.md` | เอกสารการออกแบบ UI/UX โฮโลกราฟิกสะท้อนแสง |
-| **Friday Script** | `D:\AI-Workspace\projects\friday\src\friday_walkie_talkie.py` | ไฟล์ทำงานหลัก (ย้ายเข้า `src/` โดย Hermes 2026-07-02) |
-
----
-
-## 📊 Progress Timeline
-
-```
-Phase 1 (Dialogue Foundation)  : ████████████████████ 100%
-Phase 2 (Mailbox & Tool Integration) : ██████░░░░░░░░░░░░░░░░░░  30%
-Phase 3 (Interruptible Live VAD)     : ░░░░░░░░░░░░░░░░░░░░░░░░   0%
-Phase 4 (100% Offline STT/TTS)       : ░░░░░░░░░░░░░░░░░░░░░░░░   0%
+```text
+Mic
+ -> STT provider
+ -> Friday runtime
+ -> LLM / Hermes reasoning
+ -> structured intent
+ -> Friday schema/policy validation
+ -> Confirm Gate when side-effecting
+ -> executor
+      -> local PC tools
+      -> Home Assistant
+      -> other approved integrations
+ -> result
+ -> TTS
 ```
 
----
+Friday remains the safety gateway and executor. Hermes must not bypass Friday to control physical devices.
 
-## 📞 Contact & Roles
+## Active Branch Stack
 
-| บทบาท | ใคร | ติดต่อ |
-|-------|-----|--------|
-| CEO / Project Owner | คุณฟรี | ในระบบ |
-| Orchestrator / AI Assistant | Antigravity | ในระบบ |
-| Local Worker Agent | Hermes | เครื่องคอมพิวเตอร์ |
-| System Worker | OpenClaw | เครื่องคอมพิวเตอร์ |
+### Voice / STT track
 
----
+| Branch | State | Remaining gate |
+|---|---|---|
+| `feat/phase0-security-cleanup` | Code prepared | Windows regression + TV re-pair/live validation |
+| `feat/phase1-stt-provider-abstraction` | Code prepared | runtime regression on target machine |
+| `feat/phase2-stt-benchmark-harness` | Harness prepared | record and run real owner speech dataset |
+| `feat/phase3-streaming-stt-contract` | Contract prepared | blocked from production integration until Phase 2 evidence |
 
-**Template Version:** 1.0  
-**Last Edited By:** Antigravity
+### Smart-home / Home Assistant track
+
+| Branch | State | Remaining gate |
+|---|---|---|
+| `feat/phase4-home-assistant-foundation` | Read-only client/tools prepared | connect to real Home Assistant and verify entities |
+| `feat/phase5-home-device-registry` | Registry/aliases prepared | map and verify real entity IDs/capabilities |
+| `feat/phase6-smart-home-confirm-gated-tools` | Write tools prepared | Phase 4/5 live gates + confirmation UX validation |
+| `feat/phase7-ir-legacy-ac-readiness` | Readiness/runbook prepared | IR hardware + one-AC pilot |
+| `feat/phase8-hermes-home-tool-intent-contract` | Validator contract prepared | Hermes live tool-intent remains disabled |
+| `feat/phase9-remote-command-security-contract` | Security policy/contract prepared | secure remote transport/auth design and live verification |
+| `feat/phase10-home-scene-orchestration` | Scene orchestration prepared | real Home Assistant scenes + live gate |
+
+## Branch Dependency Graph
+
+```text
+master
+  -> phase0
+      -> phase1
+          -> phase2
+              -> phase3
+          -> phase4
+              -> phase5
+                  -> phase6
+                      -> phase7
+                          -> phase8
+                              -> phase9
+                                  -> phase10
+```
+
+Phase 3 streaming STT does not block Home Assistant development. Both tracks share the security/STT abstraction baseline but can be reviewed independently where dependencies permit.
+
+## Important Safety Decisions
+
+### Credentials
+
+A paired LG webOS client key was previously present in public source history. The Phase 0 branch removes machine/device secrets from current source and moves them to environment configuration.
+
+Before TV control is considered safe again on the machine:
+
+- pull the Phase 0 branch
+- create local `.env`
+- re-pair/rotate the LG client key
+- never commit the new key
+
+Future Home Assistant tokens follow the same rule.
+
+### Physical device commands
+
+A successful Home Assistant service response does not prove that a physical device actually changed state.
+
+Friday should say that it **sent the command** unless state was independently verified.
+
+This is especially important for IR devices because IR is usually one-way and the physical remote can change state without Home Assistant knowing.
+
+### Confirm Gate
+
+All current planned smart-home write tools remain confirm-gated. Phase 8 Hermes intent validation cannot override this policy.
+
+## STT Direction
+
+Current production default remains Google Cloud STT.
+
+The prepared branch stack introduces a provider boundary and a benchmark harness so Google vs Typhoon is selected from real evidence rather than vendor benchmark claims.
+
+The benchmark must prioritize:
+
+- command-critical accuracy
+- Thai-English code switching
+- numbers/temperature/device names
+- median/p95 latency
+- stability and target-machine resource usage
+
+Streaming integration is blocked until the benchmark justifies it.
+
+## Home Assistant Direction
+
+Home Assistant is the intended household control plane.
+
+Friday should operate on logical names such as:
+
+```text
+downstairs_ac
+living_room_tv
+bedroom_fan
+```
+
+with Thai aliases such as:
+
+```text
+แอร์ล่าง
+ทีวีห้องนั่งเล่น
+พัดลมห้องนอน
+```
+
+The registry maps these logical devices to Home Assistant entities and validates allowed capabilities. Friday/Hermes should not reason over raw IP/MAC/vendor details.
+
+Persistent automation belongs in Home Assistant whenever practical so it continues working even if Friday, Hermes, or the LLM is offline.
+
+## What Is Blocked Right Now
+
+The code can continue to be prepared remotely, but these gates require the owner's machines or hardware:
+
+1. Phase 0 full regression and TV live validation
+2. Phase 1 runtime regression
+3. Phase 2 real speech benchmark
+4. Phase 4 real Home Assistant connection
+5. Phase 5 real entity/alias mapping
+6. Phase 6 real confirmation + command pilot
+7. Phase 7 IR hardware pilot
+8. later remote-access and scene live tests
+
+Until those gates run, documents must say **prepared/pending**, not PASS.
+
+## Merge Strategy When Machines Are Online
+
+Recommended sequence:
+
+1. sync local repo with `master`
+2. run Phase 0 security tests/regression and re-pair TV
+3. open/review/merge Phase 0
+4. validate/open/merge Phase 1
+5. run Phase 2 real benchmark; merge harness independently from any provider decision
+6. only integrate Phase 3 streaming if benchmark supports it
+7. validate Phase 4 read-only Home Assistant
+8. validate Phase 5 real registry mapping
+9. validate Phase 6 write tools and Confirm Gate UX
+10. continue Phase 7–10 only after prerequisite gates
+
+Use stacked PRs while branches still depend on one another; retarget/rebase as earlier phases merge.
+
+## Current Documents
+
+Authoritative reading order:
+
+1. latest dated file under `handoff/`
+2. this file — `docs/PROJECT_CONTEXT.md`
+3. `docs/FRIDAY_DEVELOPMENT_PLAN_2026-08-26.md`
+4. `docs/PRD.md`
+5. phase evidence/contract files on the relevant feature branch
+
+Historical July plans and audits remain useful evidence but may describe superseded architecture. Verify them against current code before acting.
