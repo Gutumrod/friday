@@ -63,7 +63,7 @@ def install_home_control_tools(
             device, entity_id = _resolve(device_alias, "power")
             domain = _entity_domain(entity_id)
             client.call_service(domain, "turn_on" if action == "on" else "turn_off", {"entity_id": entity_id})
-            return f"{'เปิด' if action == 'on' else 'ปิด'} {device.id} ให้แล้วค่ะ"
+            return f"ส่งคำสั่ง{'เปิด' if action == 'on' else 'ปิด'} {device.id} ไปที่ Home Assistant แล้วค่ะ"
         except (ValueError, HomeDeviceRegistryError, HomeAssistantError) as exc:
             return f"สั่งเปิดปิดอุปกรณ์ไม่สำเร็จค่ะ ({exc})"
 
@@ -83,7 +83,7 @@ def install_home_control_tools(
                 {"entity_id": entity_id, "temperature": temperature},
             )
             display = int(temperature) if temperature.is_integer() else temperature
-            return f"ตั้ง {device.id} เป็น {display} องศาแล้วค่ะ"
+            return f"ส่งคำสั่งตั้ง {device.id} เป็น {display} องศาไปที่ Home Assistant แล้วค่ะ"
         except (TypeError, ValueError, HomeDeviceRegistryError, HomeAssistantError) as exc:
             if isinstance(exc, ValueError) and str(exc) == "invalid tool arguments":
                 return f"ตั้งอุณหภูมิแอร์ไม่สำเร็จค่ะ ({exc})"
@@ -102,7 +102,7 @@ def install_home_control_tools(
             if _entity_domain(entity_id) != "climate":
                 raise HomeDeviceRegistryError("mode capability requires a climate entity")
             client.call_service("climate", "set_hvac_mode", {"entity_id": entity_id, "hvac_mode": mode})
-            return f"ตั้งโหมด {device.id} เป็น {mode} แล้วค่ะ"
+            return f"ส่งคำสั่งตั้งโหมด {device.id} เป็น {mode} ไปที่ Home Assistant แล้วค่ะ"
         except (ValueError, HomeDeviceRegistryError, HomeAssistantError) as exc:
             return f"ตั้งโหมดแอร์ไม่สำเร็จค่ะ ({exc})"
 
@@ -117,7 +117,7 @@ def install_home_control_tools(
             if _entity_domain(entity_id) != "climate":
                 raise HomeDeviceRegistryError("fan capability requires a climate entity")
             client.call_service("climate", "set_fan_mode", {"entity_id": entity_id, "fan_mode": fan_mode})
-            return f"ตั้งพัดลม {device.id} เป็น {fan_mode} แล้วค่ะ"
+            return f"ส่งคำสั่งตั้งพัดลม {device.id} เป็น {fan_mode} ไปที่ Home Assistant แล้วค่ะ"
         except (ValueError, HomeDeviceRegistryError, HomeAssistantError) as exc:
             return f"ตั้งพัดลมแอร์ไม่สำเร็จค่ะ ({exc})"
 
