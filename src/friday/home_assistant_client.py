@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -47,6 +48,9 @@ class HomeAssistantConfig:
         return cls(base_url=base_url, token=token, timeout_seconds=timeout)
 
 
+_SERVICE_PART_RE = re.compile(r"^[a-z0-9_]+$")
+
+
 class HomeAssistantClient:
     def __init__(self, config: HomeAssistantConfig, *, session: Any | None = None) -> None:
         self.config = config
@@ -55,19 +59,20 @@ class HomeAssistantClient:
     def __repr__(self) -> str:
         return f"HomeAssistantClient(base_url={self.config.base_url!r}, timeout_seconds={self.config.timeout_seconds!r})"
 
-    def _request(self, method: str, path: str) -> Any:
+    def _request(self, method: str, path: str, *, json_body: dict[str, Any] | None = None) -> Any:
         url = self.config.base_url + path
         headers = {
             "Authorization": f"Bearer {self.config.token}",
             "Content-Type": "application/json",
         }
+        kwargs: dict[str, Any] = {
+            "headers": headers,
+            "timeout": self.config.timeout_seconds,
+        }
+        if json_body is not None:
+            kwargs["json"] = json_body
         try:
-            response = self._session.request(
-                method,
-                url,
-                headers=headers,
-                timeout=self.config.timeout_seconds,
-            )
+            response = self._session.request(method, url, **kwargs)
         except requests.RequestException as exc:
             raise HomeAssistantError("home_assistant_unreachable") from exc
         except Exception as exc:
@@ -119,3 +124,16 @@ class HomeAssistantClient:
             if len(rows) >= limit:
                 break
         return rows
+
+    def call_service(self, domain: str, service: str, service_data: dict[str, Any]) -> Any:
+        domain = domain.strip().lower()
+        service = service.strip().lower()
+        if not _SERVICE_PART_RE.fullmatch(domain) or not _SERVICE_PART_RE.fullmatch(service):
+            raise HomeAssistantError("invalid_service_name")
+        if not isinstance(service_data, dict):
+            raise HomeAssistantError("invalid_service_data")
+        return self._request(
+            "POST",
+            f"/api/services/{domain}/{service}",
+            json_body=service_data,
+        )
