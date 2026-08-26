@@ -11,3 +11,6 @@ backups/
 friday_temp_response*
 .tmp_tts_rar_*/
 output/
+benchmarks/stt/audio/
+benchmarks/stt/results/
+benchmarks/stt/manifest.jsonl
