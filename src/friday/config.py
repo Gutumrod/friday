@@ -1,4 +1,6 @@
+import ipaddress
 import os
+import re
 
 
 def load_dotenv():
@@ -18,32 +20,99 @@ def load_dotenv():
 
 load_dotenv()
 
+
+def _env_str(name, default=""):
+    return os.environ.get(name, default).strip()
+
+
+def _env_optional_int(name, default=None):
+    raw = _env_str(name)
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer") from exc
+
+
+def _env_positive_float(name, default):
+    raw = _env_str(name)
+    if not raw:
+        return float(default)
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a number") from exc
+    if value <= 0:
+        raise RuntimeError(f"{name} must be greater than zero")
+    return value
+
+
 SRC_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_DIR = os.path.dirname(SRC_DIR)
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 MODEL_NAME = "gemma4:31b-cloud"
-# STT: Google Cloud Speech-to-Text (official, paid-but-cheap) replaces the free/unofficial
-# recognize_google() endpoint below -- 2026-07-04, see listen_mic(). Credentials borrowed from
-# the existing craftbike_bot GCP project (CEO confirmed it's unused for anything else, API
-# enabled on that project specifically for this).
-GOOGLE_CLOUD_CREDS_PATH = os.environ.get("GOOGLE_CLOUD_CREDS_PATH", r"D:\craftbike_bot\credentials.json")
+# STT credential path is machine-local. No repository default: if unset/unavailable,
+# _recognize_speech() falls back to the existing recognize_google() path instead of exposing
+# a workstation-specific credential location in source.
+GOOGLE_CLOUD_CREDS_PATH = _env_str("GOOGLE_CLOUD_CREDS_PATH")
 TEMP_AUDIO_FILE = "friday_temp_response.mp3"
 TEMP_AUDIO_FILE_FALLBACK = "friday_temp_response_fallback.wav"
-VOICE_NAME = "th-TH-PremwadeeNeural"  # Microsoft Premwadee (Thai Female - Friday)
-JARVIS_VOICE = "th-TH-NiwatNeural"  # Microsoft Niwat (Thai Male) -- used only for the cloud-slow warning below, speak(voice=...)
+VOICE_NAME = "th-TH-PremwadeeNeural"
+JARVIS_VOICE = "th-TH-NiwatNeural"
 SLOW_WARNING_MESSAGE = "ผมจาวิส รายงานครับ ไฟรเดย์กำลังเจอปัญหา รอสักครู่ครับนาย"
-DEVICE_INDEX = None  # ใส่เลข Index ของไมค์ที่ใช้จริง (เช่น 4 สำหรับ HyperX, 1 สำหรับ Razer X) ถ้าเว้น None จะใช้ไมค์หลักของ Windows
-CAMERA_INDEX = 0  # index ของกล้องเว็บแคมที่ใช้จริง (เครื่องนี้มีกล้องเดียว = Razer Kiyo = 0) เครื่องอื่นที่มีหลายตัวอาจไม่ใช่ 0 เช็คด้วย Get-PnpDevice -Class Camera ก่อนเปลี่ยน
+DEVICE_INDEX = _env_optional_int("FRIDAY_DEVICE_INDEX", None)
+CAMERA_INDEX = _env_optional_int("FRIDAY_CAMERA_INDEX", 0)
 
-# LG webOS TV (2026-07-03 live test, see notes/lg-tv-control-live-test-2026-07-03.md) -- ค่าพวกนี้
-# เฉพาะเครื่องนี้ทั้งหมด เปลี่ยนตามบ้าน/ทีวีจริงถ้าเอาไปใช้เครื่องอื่น
-TV_IP = "192.168.1.107"
-TV_MAC = "58:fd:b1:dc:44:c3"
-TV_CLIENT_KEY = "974cfe0f19cc5c3ac719b2e3726ffcaf"
-TV_CONNECT_TIMEOUT = 5
-TV_BROADCAST_IP = "192.168.1.255"
-TV_BOOT_WAIT = 8
+# LG webOS TV configuration is machine-local. The old repository contained a paired client
+# key in public source; all values now come from .env/process environment only. Re-pair the TV
+# and rotate the old key before enabling control again.
+TV_IP = _env_str("FRIDAY_TV_IP")
+TV_MAC = _env_str("FRIDAY_TV_MAC")
+TV_CLIENT_KEY = _env_str("FRIDAY_TV_CLIENT_KEY")
+TV_CONNECT_TIMEOUT = _env_positive_float("FRIDAY_TV_CONNECT_TIMEOUT", 5)
+TV_BROADCAST_IP = _env_str("FRIDAY_TV_BROADCAST_IP")
+TV_BOOT_WAIT = _env_positive_float("FRIDAY_TV_BOOT_WAIT", 8)
+
+_TV_MAC_RE = re.compile(r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+
+
+def tv_config_issues():
+    """Return safe, value-free diagnostics for the optional LG TV integration."""
+    required = {
+        "FRIDAY_TV_IP": TV_IP,
+        "FRIDAY_TV_MAC": TV_MAC,
+        "FRIDAY_TV_CLIENT_KEY": TV_CLIENT_KEY,
+        "FRIDAY_TV_BROADCAST_IP": TV_BROADCAST_IP,
+    }
+    missing = [name for name, value in required.items() if not value]
+    issues = []
+    if missing:
+        issues.append("LG TV integration disabled: missing " + ", ".join(missing))
+        return issues
+
+    try:
+        ipaddress.ip_address(TV_IP)
+    except ValueError:
+        issues.append("LG TV integration disabled: FRIDAY_TV_IP is not a valid IP address")
+    try:
+        ipaddress.ip_address(TV_BROADCAST_IP)
+    except ValueError:
+        issues.append("LG TV integration disabled: FRIDAY_TV_BROADCAST_IP is not a valid IP address")
+    if not _TV_MAC_RE.fullmatch(TV_MAC):
+        issues.append("LG TV integration disabled: FRIDAY_TV_MAC must use XX:XX:XX:XX:XX:XX format")
+    return issues
+
+
+def runtime_config_warnings():
+    """Startup diagnostics. Messages intentionally contain variable names, never secret values."""
+    warnings = []
+    if not GOOGLE_CLOUD_CREDS_PATH:
+        warnings.append("GOOGLE_CLOUD_CREDS_PATH is not set; Google Cloud STT may fall back to recognize_google")
+    warnings.extend(tv_config_issues())
+    return warnings
+
 
 # dispatch_to_hermes -- see docs/../shared/decisions/dispatch-to-hermes-contract-2026-07-02.md
 MAILBOX_DIR = r"D:\AI-Workspace\mailbox"
