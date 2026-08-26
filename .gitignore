@@ -8,6 +8,7 @@ vault/
 backups/
 .env
 *.env
+home_devices.json
 friday_temp_response*
 .tmp_tts_rar_*/
 output/
