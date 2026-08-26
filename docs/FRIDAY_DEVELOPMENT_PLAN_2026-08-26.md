@@ -1,467 +1,262 @@
-# Friday Development Plan — Voice + Home Assistant Roadmap
+# Friday Development Plan — Current Roadmap
 
-วันที่: 2026-08-26
-repo: `Gutumrod/friday`
-branch: `master`
-
-## Goal
-
-พัฒนา Friday ให้เป็น voice front-door ของบ้านและระบบ agent โดยคง Friday เป็น safety gateway + local tool executor และให้ Hermes เป็น reasoning/worker router ตาม architecture เดิม
-
-Target flow ระยะยาว:
-
-`Mic -> Streaming STT -> Friday -> Hermes/LLM -> Validated Tool Intent -> Confirm Gate -> Home Assistant -> Device -> Result -> Friday TTS`
-
-หลักสำคัญ:
-
-- Friday เป็นผู้ execute side-effect tools
-- Hermes ห้ามสั่งอุปกรณ์จริงตรง
-- Home Assistant เป็น smart-home control plane กลาง
-- Friday ไม่ผูกกับยี่ห้ออุปกรณ์ เช่น Broadlink/Tuya/LG โดยตรงใน business intent layer
-- STT ต้องเปลี่ยน provider ได้และ benchmark จากเสียงจริงก่อนเลือก
-- ทุก real-world side effect ต้องผ่าน policy/Confirm Gate ตามกติกา repo
-- ห้าม hard-code credentials, tokens, client keys, IP-specific secrets ใน source
-
----
-
-## Current Verified Baseline
-
-### Voice / STT
-
-Current production path:
-
-`Microphone -> SpeechRecognition -> Google Cloud STT (th-TH) -> recognize_google fallback`
-
-ข้อจำกัดปัจจุบัน:
-
-- `r.listen()` รอประโยคจบก่อน transcribe
-- `phrase_time_limit=15`
-- ยังไม่มี provider abstraction
-- ยังไม่ได้ใช้ true streaming ASR
-
-### LLM / Tool Routing
-
-- Ollama native structured function calling ใช้งานแล้ว
-- `TOOLS` + `TOOL_SCHEMAS` เป็น execution boundary
-- `CONFIRM_GATED` เป็น safety boundary ของ side effects
-- TV tools มี live precedent แล้ว: power, volume, app launch, video, remote button
-
-### Friday API/UI
-
-มี FastAPI service boundary แล้ว:
-
-- `/api/chat`
-- `/api/tools`
-- `/api/tool/confirm`
-- `/ws/events`
-
-ดังนั้นไม่สร้าง control panel/CLI architecture ใหม่จากศูนย์ ให้ reuse Friday API + tool layer เดิม
-
-### Hermes
-
-Architecture เดิมยังคงใช้:
-
-`off -> shadow -> sync -> tool_intent`
-
-Friday ยังเป็น safety executor และ Hermes เป็น reasoning/worker router
-
----
-
-# Phase 0 — Security & Machine-Specific Config Cleanup
-
-Status: **BLOCKER BEFORE SMART-HOME EXPANSION**
-
-## Scope
-
-- ย้าย LG TV client key ออกจาก `config.py`
-- ย้าย device-specific values ที่ควรเป็น runtime config ไป env/config layer
-- เพิ่ม validation ตอน startup สำหรับ required secrets
-- ไม่ log secret/token/raw credential
-- document secret rotation / re-pair procedure
-
-ค่าที่ต้อง review:
-
-- `TV_CLIENT_KEY`
-- device IP/MAC ที่ควร configurable
-- Home Assistant token ในอนาคต
-- cloud/STT credentials path
-
-## Acceptance
-
-- source ไม่มี credential/token จริง
-- `.env.example` มีเฉพาะ placeholder
-- missing/invalid secret fail clearly พร้อม logging ที่ไม่ leak secret
-- TV control regression ผ่าน
-- user re-pair/rotate key ที่เคยอยู่ใน public history ถ้าจำเป็น
-
-Gate: **Owner approval required before Phase 1 implementation**
-
----
-
-# Phase 1 — STT Provider Abstraction
-
-Status: PLANNED
+**Date:** 2026-08-26  
+**Repository:** `Gutumrod/friday`  
+**Stable branch:** `master`  
+**Development model:** phase branches are prepared first; PR/merge waits for required local/hardware evidence.
 
 ## Goal
 
-แยก speech recognition ออกจาก `core.py` เพื่อให้สลับ provider ได้โดยไม่แก้ voice loop หลัก
+Build Friday into the conversational and safety front door for local computer tools, Hermes, and Home Assistant without letting reasoning components bypass execution policy.
 
-## Target structure
-
-- `src/friday/stt/base.py`
-- `src/friday/stt/google.py`
-- `src/friday/stt/typhoon.py`
-- `src/friday/stt/factory.py`
-
-Suggested contract:
-
-- `transcribe(audio) -> STTResult`
-- provider name
-- text
-- confidence/quality metadata ถ้ามี
-- latency_ms
-- error classification
-
-Config:
-
-- `FRIDAY_STT_PROVIDER=google|typhoon`
-- provider-specific settings ผ่าน env
-- fallback policy explicit ไม่ silent
-
-## Acceptance
-
-- Google behavior เดิมยังทำงานเหมือนเดิม
-- provider สลับได้โดย config
-- hard failure / unclear speech แยกประเภทได้
-- latency logging ระบุ provider
-- unit tests ครอบ provider selection + failure path
-
----
-
-# Phase 2 — Thai STT Benchmark: Google vs Typhoon ASR Real-Time
-
-Status: PLANNED
-
-## Goal
-
-เลือก STT จาก evidence ของเสียงเจ้าของจริง ไม่เลือกจาก benchmark vendor อย่างเดียว
-
-## Dataset
-
-อัดอย่างน้อย 30 utterances แบ่งเป็น:
-
-1. ภาษาไทยทั่วไป
-2. ไทยปนอังกฤษ
-3. ชื่อแอป/เทคโนโลยี เช่น YouTube, Home Assistant, Friday, Hermes
-4. คำสั่งบ้าน เช่น เปิดทีวี ปรับเสียง เปิดแอร์ 25 องศา
-5. ประโยคพูดเร็ว/เว้นจังหวะธรรมชาติ
-6. background noise ระดับใช้งานจริง
-
-## Measure
-
-- transcription correctness
-- command-critical error rate
-- latency median/p95
-- Thai-English code-switch accuracy
-- number/date/temperature handling
-- CPU/GPU/RAM usage
-
-## Decision rule
-
-Typhoon ผ่านสำหรับ production เมื่อ:
-
-- command-critical accuracy >= current Google baseline
-- latency ดีกว่าอย่างมีนัยสำคัญ
-- error behavior predictable
-- local runtime stable บน hardware ปัจจุบัน
-
-ถ้าไม่ผ่าน: Google remains default, Typhoon stays experimental
-
----
-
-# Phase 3 — Streaming Voice Pipeline
-
-Status: BLOCKED BY PHASE 2
-
-## Goal
-
-ใช้ข้อดีของ realtime ASR จริง แทนการอัดจนจบประโยคก่อนส่ง
-
-Target:
-
-`Mic audio chunks -> streaming ASR -> partial transcript -> endpoint/final transcript -> Friday intent pipeline`
-
-## Scope
-
-- streaming microphone reader
-- partial/final transcript state
-- interruption-safe audio locks
-- barge-in rules เพื่อไม่ให้ Friday ฟังเสียงตัวเอง
-- endpoint detection
-- timeout/fallback behavior
-- preserve current turn-based mode as rollback option
-
-## Acceptance
-
-- first partial transcript เร็วกว่าปัจจุบันชัดเจน
-- final command ไม่โดนตัดกลางคำ
-- TTS ไม่ bleed เข้า STT
-- rollback ไป legacy turn-based STT ได้ด้วย config
-- latency evidence before/after
-
----
-
-# Phase 4 — Home Assistant Foundation
-
-Status: PLANNED; IMPLEMENT ONLY AFTER OWNER APPROVAL
-
-## Goal
-
-ใช้ Home Assistant เป็น smart-home control plane กลาง
-
-Friday ต้องไม่คุยกับ IR blaster/plug/smart TV vendor โดยตรงใน intent layer
-
-Target flow:
-
-`Friday Tool -> HomeAssistantClient -> HA REST/WebSocket API -> Entity/Service`
-
-## Target module
-
-`src/friday/home_assistant_client.py`
-
-Responsibilities:
-
-- authenticated local API client
-- health check
-- entity state read
-- service call
-- timeout/retry policy
-- structured error mapping
-- no secret logging
-
-Config via env:
-
-- `HOME_ASSISTANT_URL`
-- `HOME_ASSISTANT_TOKEN`
-- `HOME_ASSISTANT_CONNECT_TIMEOUT`
-
-## Initial read-only tools
-
-- `ha_status`
-- `ha_get_entity_state`
-- `ha_list_entities` (filtered/limited)
-
-## Acceptance
-
-- Friday can probe HA health
-- Friday can read one known entity state
-- failure does not block voice loop indefinitely
-- no token appears in log/history
-
----
-
-# Phase 5 — Home Device Registry & Stable Aliases
-
-Status: BLOCKED BY PHASE 4
-
-## Goal
-
-ไม่ให้ LLM/Hermes ต้องรู้ raw entity IDs, IP, MAC หรือ vendor details
-
-Example logical registry:
-
-- `living_room_tv`
-- `downstairs_ac`
-- `upstairs_ac`
-- `bedroom_fan`
-
-Each logical device maps to Home Assistant entities/capabilities
-
-## Rules
-
-- aliases config-driven
-- support Thai aliases เช่น `แอร์ล่าง`, `ทีวีห้องนั่งเล่น`
-- entity allowlist
-- capability validation before execute
-- unknown/ambiguous device => ask/return structured error, never guess
-
----
-
-# Phase 6 — Smart Home Tool Set
-
-Status: BLOCKED BY PHASE 5
-
-## Initial tools
-
-### Climate
-
-- `home_ac_power`
-- `home_ac_set_temperature`
-- `home_ac_set_mode`
-- `home_ac_set_fan_mode`
-- `home_ac_set_state`
-
-### General
-
-- `home_device_power`
-- `home_scene_activate`
-- `home_device_status`
-
-All write tools are side effects and must be registered in `CONFIRM_GATED` unless a later explicit safety policy defines a narrower safe exception.
-
-## AC state model
-
-Friday/Hermes communicates desired semantic state:
+Long-term control flow:
 
 ```text
-power=on
-temperature=25
-mode=cool
-fan=auto
+Mic
+ -> STT
+ -> Friday runtime
+ -> LLM / Hermes reasoning
+ -> validated structured intent
+ -> Friday Confirm Gate / policy
+ -> local executor or Home Assistant
+ -> result / state evidence
+ -> Friday TTS
 ```
 
-Home Assistant/device integration handles vendor-specific IR/service details
+## Current Baseline on `master`
 
-Friday must not implement raw IR code logic
+- turn-based Windows voice runtime
+- Google Cloud STT (`th-TH`) + free Google fallback on Cloud request failure
+- native Ollama structured tool calling
+- `TOOLS` / `TOOL_SCHEMAS`
+- `CONFIRM_GATED`
+- local system tools, timers, alarms
+- camera and LG webOS TV tools
+- JaiTTS local voice primary, Edge TTS fallback/alternate voice
+- memory/history vault
+- FastAPI + UI service boundary
+- Hermes dispatch/notification/shadow foundation
 
----
+`master` intentionally does **not** yet contain the new Phase 0–10 implementation stack.
 
-# Phase 7 — IR Blaster / Legacy AC Integration
+## Branch Graph
 
-Status: HARDWARE-DEPENDENT FUTURE PHASE
+```text
+master
+  -> feat/phase0-security-cleanup
+      -> feat/phase1-stt-provider-abstraction
+          -> feat/phase2-stt-benchmark-harness
+              -> feat/phase3-streaming-stt-contract
+          -> feat/phase4-home-assistant-foundation
+              -> feat/phase5-home-device-registry
+                  -> feat/phase6-smart-home-confirm-gated-tools
+                      -> feat/phase7-ir-legacy-ac-readiness
+                          -> feat/phase8-hermes-home-tool-intent-contract
+                              -> feat/phase9-remote-command-security-contract
+                                  -> feat/phase10-home-scene-orchestration
+```
 
-## Goal
+The Phase 3 streaming-STT line is evidence-gated and does not block the Home Assistant line.
 
-เพิ่มแอร์เก่าผ่าน IR blaster โดยให้ HA expose เป็น climate/device entity
+## Phase Status
 
-Rules:
+### Phase 0 — Security / Machine Config
 
-- one IR blaster may control multiple IR devices in same physical coverage area
-- remote เดิมยังใช้งานได้
-- acknowledge state-desync risk when physical remote is used
-- prefer HA climate abstraction over raw button emulation
-- if true device state is unavailable, mark state as assumed/uncertain
+**Branch:** `feat/phase0-security-cleanup`  
+**State:** CODE PREPARED — LIVE GATE PENDING
 
-## First pilot
+Prepared:
 
-- ชั้นล่าง 1 IR blaster
-- 1 AC only first
-- validate power + temperature + mode
-- after stable, expand to upstairs
+- move LG webOS paired key and machine-specific TV values out of source
+- machine-local `.env` configuration
+- safe startup diagnostics without printing secret values
+- fail-closed TV tool behavior when config is incomplete
+- phase-specific security regression coverage
 
----
+Required before merge:
 
-# Phase 8 — Hermes Tool Intent Bridge for Home Control
+- run tests on target Windows environment
+- rotate/re-pair the LG TV client key because the old key existed in public history
+- run existing TV regressions
+- live TV verification
 
-Status: BLOCKED BY EXISTING HERMES SPEAK-ONLY SYNC + TOOL_INTENT GATES
+### Phase 1 — STT Provider Abstraction
 
-## Goal
+**Branch:** `feat/phase1-stt-provider-abstraction`  
+**State:** CODE PREPARED — RUNTIME GATE PENDING
 
-Hermes may reason about smart-home intent but Friday remains validator/executor
+Prepared:
 
-Flow:
+- STT provider contract/result/error model
+- Google provider preserving current behavior
+- optional Typhoon adapter path
+- provider selection via environment configuration
+- default remains Google until evidence says otherwise
 
-`Hermes tool_intent -> Friday schema validation -> entity/capability validation -> Confirm Gate -> Friday HA tool -> result`
+Do not force Typhoon into Windows production merely because the adapter exists.
 
-Negative cases required:
+### Phase 2 — Google vs Typhoon Benchmark
 
-- unknown tool
-- malformed args
-- out-of-range temperature
-- unknown device alias
-- HA unavailable
-- timeout
-- confirmation denied
-- duplicated/replayed command
+**Branch:** `feat/phase2-stt-benchmark-harness`  
+**State:** HARNESS PREPARED — DATASET PENDING
 
-Hermes must never receive raw HA token
+Prepared benchmark measures:
 
----
+- transcription correctness / CER
+- command-critical accuracy
+- Thai-English code switching
+- numbers / temperature / device names
+- median and p95 latency
+- provider failures
 
-# Phase 9 — Remote From Outside Home
+Required evidence: real owner speech recorded under normal operating conditions.
 
-Status: FUTURE
+### Phase 3 — Streaming STT
 
-Goal example:
+**Branch:** `feat/phase3-streaming-stt-contract`  
+**State:** CONTRACT PREPARED — PRODUCTION INTEGRATION BLOCKED BY PHASE 2
 
-> “Friday กำลังกลับบ้าน เปิดแอร์ล่าง 25 องศา”
+Prepared only as an interface/state-machine boundary so future streaming ASR can expose partial/final transcripts cleanly.
 
-Security requirements:
+Do not replace the stable turn-based microphone loop until the benchmark supports the decision and barge-in/TTS feedback behavior is tested.
 
-- do not expose Home Assistant unauthenticated to public internet
-- use approved secure remote path/VPN/reverse access design
-- authentication + authorization required
-- audit every remote side-effect command
-- optional stronger confirmation for remote execution
+### Phase 4 — Home Assistant Read-Only Foundation
 
----
+**Branch:** `feat/phase4-home-assistant-foundation`  
+**State:** CODE PREPARED — REAL HA GATE PENDING
 
-# Phase 10 — Automation / Iron-Man Layer
+Prepared:
 
-Status: FUTURE
+- authenticated Home Assistant client
+- token hidden from object representation/errors
+- health/state/list read operations
+- optional registration: HA tools are absent when HA config is unavailable
+- no physical-device write service in this phase
 
-Examples:
+Required before merge: connect to real Home Assistant and verify known entities.
 
-- `กำลังกลับบ้าน` scene
-- arrival pre-cooling
-- bedtime scene
+### Phase 5 — Logical Home Device Registry
+
+**Branch:** `feat/phase5-home-device-registry`  
+**State:** CODE PREPARED — REAL ENTITY MAPPING PENDING
+
+Purpose:
+
+- logical device IDs instead of raw entity IDs
+- Thai aliases
+- capability allowlists
+- duplicate alias detection
+- unknown/ambiguous devices fail closed
+
+Example:
+
+```text
+downstairs_ac -> climate.downstairs_ac
+aliases: แอร์ล่าง, แอร์ชั้นล่าง
+capabilities: power, temperature, mode, fan
+```
+
+### Phase 6 — Confirm-Gated Smart-Home Writes
+
+**Branch:** `feat/phase6-smart-home-confirm-gated-tools`  
+**State:** CODE PREPARED — MERGE BLOCKED BY PHASE 4/5 LIVE GATES
+
+Prepared write intents include:
+
+- logical device power
+- AC temperature
+- HVAC mode
+- fan mode
+
+Safety rules:
+
+- model uses logical device alias, not arbitrary raw entity ID
+- capability/range validation happens before service call
+- all write tools register into `CONFIRM_GATED`
+- unknown/malformed/out-of-range requests do not call Home Assistant
+- a successful HA service call means “command sent”, not guaranteed physical-state confirmation
+
+### Phase 7 — Legacy AC / IR Readiness
+
+**Branch:** `feat/phase7-ir-legacy-ac-readiness`  
+**State:** READINESS/RUNBOOK — HARDWARE PENDING
+
+First pilot should be one IR blaster + one downstairs AC.
+
+Prefer exposing the AC through a Home Assistant climate abstraction. If the integration cannot know true device state, mark state as assumed/uncertain.
+
+### Phase 8 — Hermes Home Tool Intent Contract
+
+**Branch:** `feat/phase8-hermes-home-tool-intent-contract`  
+**State:** VALIDATOR PREPARED — LIVE EXECUTION DISABLED
+
+Hermes may propose a structured tool-intent envelope, but Friday validates tool allowlist/schema/policy. Write intent is rejected if Friday does not have the corresponding Confirm Gate.
+
+Hermes cannot request `requires_confirmation=false` or otherwise override Friday safety policy.
+
+### Phase 9 — Remote Command Security
+
+**Branch:** `feat/phase9-remote-command-security-contract`  
+**State:** POLICY/CONTRACT PREPARED — NO PUBLIC EXPOSURE ENABLED
+
+Remote use requires:
+
+- authenticated secure transport
+- explicit authorization
+- audit trail
+- replay/duplicate protection where implemented
+- stronger confirmation policy for remote side effects where appropriate
+
+Do not expose Friday or Home Assistant unauthenticated to the public internet.
+
+### Phase 10 — Home Scene Orchestration
+
+**Branch:** `feat/phase10-home-scene-orchestration`  
+**State:** PREPARED — REAL SCENE/LIVE GATE PENDING
+
+Friday may activate allowlisted logical scenes such as:
+
+- arriving home
+- bedtime
 - away mode
-- energy-aware automation
-- sensor-triggered actions
 
-Important:
+Scene activation remains a side effect and must be confirm-gated.
 
-Automation policy belongs in Home Assistant where practical; Friday is conversational orchestration, not the only runtime for house automations.
+Persistent triggers, schedules, and household automation logic should live in Home Assistant whenever practical so the home continues working even if Friday/Hermes/LLM is offline.
 
-This ensures automations keep working even if Friday/Hermes/LLM is offline.
+## Engineering Rules
 
----
+1. inspect current code and latest handoff before editing
+2. keep secrets and device credentials out of source
+3. preserve rollback paths
+4. never claim a gate passed without executing the required test/evidence
+5. side effects require confirmation unless explicitly approved otherwise
+6. unknown tool/device/entity/capability fails closed
+7. Hermes cannot bypass Friday execution policy
+8. semantic commands must not be coupled to vendor hardware
+9. real-device phases need real-device evidence
+10. commit/push checkpoints so work remains portable across machines
 
-# Engineering Rules For All Phases
+## Required Local Validation Sequence
 
-1. View current code before editing
-2. One phase at a time
-3. Owner approves phase before implementation
-4. Production-ready changes only; no throwaway snippets in production path
-5. Error handling + structured logging required
-6. No hard-coded credentials
-7. Tests required for positive + negative paths
-8. Real device changes must respect Confirm Gate
-9. Keep rollback path for STT and HA integration
-10. Commit/push every approved checkpoint per repo workflow
-11. Do not let Hermes bypass Friday safety/tool validation
-12. Do not couple semantic commands to vendor hardware
+When the owner machine is online:
 
----
+1. Phase 0 security + full regression + TV re-pair/live test
+2. Phase 1 STT runtime regression
+3. Phase 2 real speech benchmark
+4. Phase 3 only if benchmark supports streaming adoption
+5. Phase 4 real Home Assistant read-only test
+6. Phase 5 real alias/entity verification
+7. Phase 6 confirmation/write pilot on a low-risk device
+8. Phase 7 one-AC IR pilot
+9. Phase 8 Hermes intent tests before any live execute path
+10. Phase 9 remote-security validation before remote side effects
+11. Phase 10 scene pilot
 
-# Recommended Execution Order
+## PR / Merge Strategy
 
-1. **Phase 0 — Security cleanup**
-2. **Phase 1 — STT provider abstraction**
-3. **Phase 2 — Google vs Typhoon real benchmark**
-4. **Phase 3 — streaming STT only if benchmark supports it**
-5. Continue existing Hermes evidence/sync gates in parallel where safe
-6. **Phase 4 — Home Assistant read-only foundation**
-7. **Phase 5 — device registry**
-8. **Phase 6 — smart-home tools**
-9. **Phase 7 — IR AC pilot after hardware arrives**
-10. Hermes tool-intent bridge only after its existing safety gates pass
+Do not open one giant PR for all phases.
 
----
+Use stacked PRs following branch dependencies. Merge validated prerequisites first, then retarget/rebase dependent PRs as needed.
 
-# Current Stop Line
-
-This document is planning only.
-
-Do **not** implement yet without owner approval:
-
-- secret/config migration
-- STT provider changes
-- Typhoon runtime integration
-- streaming microphone changes
-- Home Assistant client
-- new smart-home tools
-- Confirm Gate changes
-- Hermes live tool execution
-
-Next implementation phase when approved: **Phase 0 — Security & Machine-Specific Config Cleanup**
+A branch being “code prepared” is not the same as “ready to merge.” Hardware/runtime gates remain authoritative.
