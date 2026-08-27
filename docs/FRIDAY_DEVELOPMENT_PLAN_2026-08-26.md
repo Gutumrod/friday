@@ -327,6 +327,50 @@ State sources should be ranked by authority:
 
 This extension must clearly distinguish authoritative current state from last-known commanded state.
 
+## Integration Development Workflow — Explore, Record, Productize
+
+For new household devices and integrations, Friday does **not** need to support the device before real-world testing begins. During development, ChatGPT connected to the home PC may be used as an exploration/test bench to discover and verify a working control path first.
+
+Canonical workflow:
+
+```text
+Owner request
+ -> ChatGPT + connected home PC explores the real device
+ -> identify working protocol/API/tool path
+ -> record command, inputs, response, failure cases, auth and safety behavior
+ -> repeat to verify deterministic behavior
+ -> normalize vendor-specific operations into logical capabilities
+ -> implement the verified path as a Friday tool/adapter
+ -> add schema validation + Confirm Gate for side effects
+ -> add regression/live evidence
+```
+
+Rules for this workflow:
+
+- Exploration may use temporary scripts, shell commands, browser/admin UI, discovery scans, or remote-PC tooling.
+- Exploration methods are evidence, not automatically production architecture.
+- Production Friday should prefer deterministic interfaces such as Home Assistant APIs, local HTTP/WebSocket APIs, MQTT, or documented LAN protocols.
+- Do not productize brittle browser-click automation as the normal control path when a stable API/protocol exists.
+- Never copy temporary credentials, session cookies, tokens, device keys, IP-specific secrets, or raw IR codes into source.
+- Every successful device experiment should leave a compact integration record before implementation.
+
+Minimum integration record:
+
+```text
+Device / logical ID
+Connection protocol and discovery method
+Read capabilities
+Write capabilities
+Authentication / secret storage
+Representative request and response shape
+Failure / offline behavior
+Confirmation policy
+Known limitations and state confidence
+Production path selected for Friday
+```
+
+The LG TV experiment on 2026-08-27 is the reference example: direct webOS discovery/control was proven first, DHCP/IP instability was observed, read-only media state was tested, and those findings now inform the Home Assistant migration and Friday tool design.
+
 ## Engineering Rules
 
 1. inspect current code and latest handoff before editing
@@ -340,6 +384,7 @@ This extension must clearly distinguish authoritative current state from last-kn
 9. real-device phases need real-device evidence
 10. commit/push checkpoints so work remains portable across machines
 11. Home Assistant is the canonical household control plane; vendor-specific direct integrations are compatibility layers unless explicitly retained
+12. use ChatGPT + connected PC as an exploration bench when useful, but productize only verified deterministic control paths into Friday
 
 ## Required Local Validation Sequence
 
