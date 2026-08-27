@@ -1,6 +1,6 @@
 # Friday Development Plan — Current Roadmap
 
-**Date:** 2026-08-26  
+**Date:** 2026-08-27  
 **Repository:** `Gutumrod/friday`  
 **Stable branch:** `master`  
 **Development model:** phase branches are prepared first; PR/merge waits for required local/hardware evidence.
@@ -22,6 +22,38 @@ Mic
  -> result / state evidence
  -> Friday TTS
 ```
+
+## Architecture Decision — Home Assistant Is Locked In
+
+As of 2026-08-27, Home Assistant is no longer just an optional future integration. It is the selected smart-home control plane for Friday.
+
+Target ownership:
+
+```text
+Friday / Hermes
+ -> logical intent + safety policy
+ -> Home Assistant
+ -> device integration
+      -> LG webOS TV
+      -> IR blaster / legacy AC
+      -> future lights, fans, sensors, scenes
+```
+
+Rules:
+
+- Friday remains the conversational safety gateway.
+- Home Assistant owns household device/entity integration and persistent automation where practical.
+- Friday/Hermes should not depend on raw IP/MAC/vendor details in the intent layer.
+- Direct LG webOS support may remain as a compatibility/rollback path during migration.
+- Home Assistant adoption must not wait for IR hardware.
+- IR blaster work remains hardware-dependent and can start later when hardware is purchased.
+
+Media-awareness direction:
+
+- HA should expose the LG TV as a `media_player` entity where available.
+- Friday should be able to read TV on/off state, active source/app, volume, and other media state exposed by HA.
+- Friday should maintain a small media-session record when Friday itself launches YouTube/media so it remembers what it asked the TV to play.
+- If the TV/HA integration does not expose the exact YouTube title currently playing, Friday must treat its own remembered title as last-known state, not authoritative live metadata.
 
 ## Current Baseline on `master`
 
@@ -63,7 +95,7 @@ The Phase 3 streaming-STT line is evidence-gated and does not block the Home Ass
 ### Phase 0 — Security / Machine Config
 
 **Branch:** `feat/phase0-security-cleanup`  
-**State:** CODE PREPARED — LIVE GATE PENDING
+**State:** CODE PREPARED — LIVE GATE IN PROGRESS
 
 Prepared:
 
@@ -73,12 +105,21 @@ Prepared:
 - fail-closed TV tool behavior when config is incomplete
 - phase-specific security regression coverage
 
+Current live findings:
+
+- Phase 0 security checks passed 5/5 on the target Windows PC.
+- Full Friday self-check reached 78/80; one unrelated JaiTTS/Hugging Face runtime failure remains and one Hermes redaction defect was found and fixed locally for retest/commit.
+- LG TV direct webOS pairing still works with the existing paired key.
+- The TV was rediscovered at `192.168.1.128`; its MAC matched the known TV and read-only webOS connection succeeded.
+- The IP had changed through DHCP, confirming that raw IP dependence should be reduced and/or protected with DHCP reservation during transition to Home Assistant.
+
 Required before merge:
 
-- run tests on target Windows environment
+- finish regression after the redaction fix
+- commit/push validated Phase 0 fix
 - rotate/re-pair the LG TV client key because the old key existed in public history
-- run existing TV regressions
-- live TV verification
+- finish live TV regression
+- configure DHCP reservation when router admin access is available, or move TV addressing behind Home Assistant once Phase 4 is active
 
 ### Phase 1 — STT Provider Abstraction
 
@@ -120,10 +161,12 @@ Prepared only as an interface/state-machine boundary so future streaming ASR can
 
 Do not replace the stable turn-based microphone loop until the benchmark supports the decision and barge-in/TTS feedback behavior is tested.
 
-### Phase 4 — Home Assistant Read-Only Foundation
+### Phase 4 — Home Assistant Foundation
 
 **Branch:** `feat/phase4-home-assistant-foundation`  
-**State:** CODE PREPARED — REAL HA GATE PENDING
+**State:** ARCHITECTURE DECISION LOCKED — CODE PREPARED — REAL HA GATE PENDING
+
+Home Assistant is now the selected smart-home control plane.
 
 Prepared:
 
@@ -133,7 +176,25 @@ Prepared:
 - optional registration: HA tools are absent when HA config is unavailable
 - no physical-device write service in this phase
 
-Required before merge: connect to real Home Assistant and verify known entities.
+Real-HA onboarding target:
+
+1. bring up Home Assistant on the home network
+2. add the LG webOS TV integration
+3. verify the LG TV appears as a stable media/device entity
+4. verify read-only state from Friday through HA
+5. map the TV into the logical device registry
+6. keep direct webOS tools available as rollback until HA parity is proven
+
+Media-state acceptance should include, where exposed by HA:
+
+- powered/available state
+- active app/source
+- volume/mute/output
+- media title/content metadata when the integration actually supplies it
+
+Do not claim exact YouTube playback title unless live metadata proves it or clearly label Friday's own launch record as last-known state.
+
+Required before merge: connect to a real Home Assistant instance and verify known entities.
 
 ### Phase 5 — Logical Home Device Registry
 
@@ -151,9 +212,10 @@ Purpose:
 Example:
 
 ```text
+living_room_tv -> media_player.living_room_tv
 downstairs_ac -> climate.downstairs_ac
-aliases: แอร์ล่าง, แอร์ชั้นล่าง
-capabilities: power, temperature, mode, fan
+aliases: ทีวีห้องนั่งเล่น, แอร์ล่าง, แอร์ชั้นล่าง
+capabilities: status, media, power, temperature, mode, fan
 ```
 
 ### Phase 6 — Confirm-Gated Smart-Home Writes
@@ -179,9 +241,28 @@ Safety rules:
 ### Phase 7 — Legacy AC / IR Readiness
 
 **Branch:** `feat/phase7-ir-legacy-ac-readiness`  
-**State:** READINESS/RUNBOOK — HARDWARE PENDING
+**State:** READINESS/RUNBOOK PREPARED — HARDWARE PURCHASE PENDING
 
-First pilot should be one IR blaster + one downstairs AC.
+IR remains in scope, but it does not block Home Assistant adoption.
+
+When hardware is purchased, first pilot should be:
+
+- one Broadlink-compatible IR blaster or other HA-supported IR device
+- one downstairs legacy AC
+- one room only
+- verify power + temperature + mode behavior
+
+Preferred architecture:
+
+```text
+Friday
+ -> Home Assistant climate/logical entity
+ -> HA IR integration / script / scene
+ -> IR blaster
+ -> legacy AC
+```
+
+Friday must not store or send raw IR codes directly.
 
 Prefer exposing the AC through a Home Assistant climate abstraction. If the integration cannot know true device state, mark state as assumed/uncertain.
 
@@ -224,6 +305,28 @@ Scene activation remains a side effect and must be confirm-gated.
 
 Persistent triggers, schedules, and household automation logic should live in Home Assistant whenever practical so the home continues working even if Friday/Hermes/LLM is offline.
 
+## Post-Phase-10 Media Awareness Extension
+
+No implementation branch is created yet. This is a planned extension after the Home Assistant media path is proven.
+
+Goal: Friday should answer useful questions such as:
+
+- “ทีวีเปิดอะไรอยู่”
+- “ตอนนี้เปิด YouTube อยู่ไหม”
+- “เสียงทีวีเท่าไหร่”
+- “เมื่อกี้เปิดเพลงอะไรให้กู”
+
+State sources should be ranked by authority:
+
+```text
+1. live Home Assistant/media_player metadata
+2. direct webOS read-only metadata while compatibility path exists
+3. Friday media-session memory for media Friday launched itself
+4. unknown — never guess
+```
+
+This extension must clearly distinguish authoritative current state from last-known commanded state.
+
 ## Engineering Rules
 
 1. inspect current code and latest handoff before editing
@@ -236,22 +339,25 @@ Persistent triggers, schedules, and household automation logic should live in Ho
 8. semantic commands must not be coupled to vendor hardware
 9. real-device phases need real-device evidence
 10. commit/push checkpoints so work remains portable across machines
+11. Home Assistant is the canonical household control plane; vendor-specific direct integrations are compatibility layers unless explicitly retained
 
 ## Required Local Validation Sequence
 
 When the owner machine is online:
 
-1. Phase 0 security + full regression + TV re-pair/live test
+1. finish Phase 0 security regression + TV direct-path validation
 2. Phase 1 STT runtime regression
 3. Phase 2 real speech benchmark
 4. Phase 3 only if benchmark supports streaming adoption
-5. Phase 4 real Home Assistant read-only test
-6. Phase 5 real alias/entity verification
-7. Phase 6 confirmation/write pilot on a low-risk device
-8. Phase 7 one-AC IR pilot
-9. Phase 8 Hermes intent tests before any live execute path
-10. Phase 9 remote-security validation before remote side effects
-11. Phase 10 scene pilot
+5. install/connect real Home Assistant and add LG webOS TV
+6. Phase 4 read-only HA test including TV media state where exposed
+7. Phase 5 real alias/entity verification
+8. Phase 6 confirmation/write pilot on a low-risk device
+9. Phase 7 one-AC IR pilot only after hardware is purchased
+10. Phase 8 Hermes intent tests before any live execute path
+11. Phase 9 remote-security validation before remote side effects
+12. Phase 10 scene pilot
+13. media-awareness extension after the HA TV/media path is stable
 
 ## PR / Merge Strategy
 
