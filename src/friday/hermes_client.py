@@ -53,11 +53,14 @@ def _now_iso() -> str:
 
 
 def _redact_url(url: str) -> str:
-    return re.sub(r"([?&](?:token|ticket)=)[^&]+", r"\1<redacted>", url)
+    # Stop at URL/text delimiters so an embedded URL does not swallow the rest of an error message.
+    return re.sub(r'([?&](?:token|ticket)=)[^&\s"<>]+', r"\1<redacted>", url)
 
 
 def _redact_text(text: str) -> str:
-    return _redact_url(text).replace("Bearer ", "Bearer <redacted> ")
+    redacted = _redact_url(text)
+    # Replace the complete bearer credential so the original token cannot survive after a marker.
+    return re.sub(r"\bBearer\s+[^\s,;]+", "Bearer <redacted>", redacted, flags=re.IGNORECASE)
 
 
 def _jsonl_append(log_dir: str, record: dict[str, Any]) -> str:
