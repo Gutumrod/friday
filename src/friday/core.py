@@ -70,6 +70,7 @@ from friday.config import (
 from friday import latency as _latency
 from friday import llm as _llm
 from friday import memory as _memory
+from friday import home_camera as _home_camera
 from friday import hermes_client as _hermes_client
 from friday.phrases import get_phrase, iter_phrases
 
@@ -1261,6 +1262,16 @@ def tool_tv_remote_button(args):
     getattr(inp, button)()
     return f"กดปุ่ม {button} ที่ทีวีให้แล้วค่ะ"
 
+def tool_discover_home_cameras(_args=""):
+    """Read-only LAN discovery for supported home cameras; never authenticates or changes state."""
+    try:
+        cameras = _home_camera.discover_home_cameras()
+    except Exception as exc:
+        print(f"Camera discovery failed: {type(exc).__name__}")
+        return "ค้นหากล้องในวงเครือข่ายไม่สำเร็จค่ะ"
+    return _home_camera.format_camera_discovery(cameras)
+
+
 TOOLS = {
     "get_time": tool_get_time,
     "disk_space": tool_disk_space,
@@ -1286,6 +1297,7 @@ TOOLS = {
     "open_camera": tool_open_camera,
     "look_camera": tool_look_camera,
     "close_camera": tool_close_camera,
+    "discover_home_cameras": tool_discover_home_cameras,
     "tv_power": tool_tv_power,
     "tv_volume": tool_tv_volume,
     "tv_launch_app": tool_tv_launch_app,
@@ -1389,6 +1401,10 @@ TOOL_SCHEMAS = [
             "question": {"type": "string", "description": "คำถามเฉพาะเจาะจงเกี่ยวกับภาพ ถ้าไม่ระบุจะอธิบายภาพทั่วไป"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "close_camera", "description": "ปิดกล้องเว็บแคมที่เปิดไว้",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "discover_home_cameras",
+        "description": "ค้นหากล้องวงจรปิดในบ้านบนเครือข่ายเดียวกันแบบอ่านข้อมูลอย่างเดียว ไม่เปิดภาพและไม่เปลี่ยนการตั้งค่า",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
     {"type": "function", "function": {
         "name": "tv_power", "description": "เปิดหรือปิดทีวีในบ้านผ่านเครือข่าย",
@@ -1617,6 +1633,7 @@ UNGATED_TOOL_PROGRESS_PHRASES = {
     # Vision can take a moment and is safe to acknowledge because look_camera never opens the
     # webcam by itself; open_camera remains confirm-gated.
     "look_camera": ("working", "working_looking"),
+    "discover_home_cameras": ("working", "working_checking"),
 }
 
 def ungated_tool_names():
@@ -1693,7 +1710,7 @@ def build_system_prompt():
         "ต้องบอกเป้าหมาย ผลลัพธ์ที่ต้องการ และไฟล์/โฟลเดอร์ที่เกี่ยวข้องให้ครบก่อนเรียก ถ้านายพูดสั้นเกินไป ให้ถามเพิ่ม 1 คำถามก่อน "
         "ถ้าแค่อยากแจ้งเตือนอะไรบางอย่างเข้า Telegram โดยไม่ต้องรอผลลัพธ์ ให้เรียก notify_hermes แทน (เร็วกว่า ไม่ต้องรอ) "
         "งานอื่นนอกเหนือจากนี้ (สั่งงาน OpenClaw ตรงๆ) ยังทำไม่ได้ ให้ปฏิเสธตรงๆ ว่ายังไม่พร้อมค่ะ\n\n"
-        "ข้อควรระวังสำคัญ: เครื่องมือแทบทุกตัว ยกเว้น get_time, disk_space, system_status, network_status, list_processes "
+        "ข้อควรระวังสำคัญ: เครื่องมือแทบทุกตัว ยกเว้น get_time, disk_space, system_status, network_status, list_processes, discover_home_cameras "
         "(อ่านข้อมูลอย่างเดียว ไม่มีผลจริง) ยังไม่ทำงานจริงทันทีที่คุณเรียกใช้ "
         "ระบบจะขอยืนยันจากนายก่อนเสมอ ห้ามพูดคำว่า 'จัดการให้แล้ว', 'เรียบร้อยแล้ว' หรือคำอื่นที่แปลว่าทำเสร็จแล้ว "
         "เมื่อเรียกเครื่องมือที่ต้องยืนยันเหล่านั้นเด็ดขาด เพราะยังไม่ได้ทำจริง ให้พูดสั้นๆ เป็นกลางแทน (เช่น 'ได้ค่ะ' หรือไม่พูดนำเลย) แล้วเรียกเครื่องมือได้ทันที\n\n"

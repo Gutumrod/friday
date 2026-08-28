@@ -17,3 +17,4 @@ fastapi==0.116.1
 uvicorn==0.35.0
 websockets==15.0.1
 pydantic==2.11.7
+python-kasa>=0.7.7,<0.8

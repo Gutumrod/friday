@@ -27,6 +27,10 @@
 - IP observed: `192.168.1.103`
 - MAC observed: `54-AF-97-45-2D-C2`
 - Identity: owner-confirmed indoor security camera
+- Confirmed model from read-only LAN discovery: `Tapo C210`
+- Device name reported by camera: `Nfs`
+- Firmware observed: `1.5.2 Build 260309 Rel.14048n`
+- Hardware observed: `1.0`
 - Vendor family evidence: TP-Link / Tapo-compatible network identity
 - Reachability: responds to ICMP ping; TTL observed `64`
 - Read-only service discovery during scan:
@@ -35,7 +39,8 @@
   - TLS certificate on `443`: `CN=TPRI-DEVICE, O=TPRI`
 - NetBIOS hostname: not exposed
 - PTR hostname: not exposed
-- Control/integration status: not yet tested
+- Control/integration status: control/authentication not enabled in Friday; read-only discovery tool proven live
+- Friday tool: `discover_home_cameras` discovers camera metadata without authenticating or changing state
 
 ## Friday Integration Rules
 

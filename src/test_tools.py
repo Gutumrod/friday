@@ -456,6 +456,7 @@ def check_ungated_tools_list_and_progress_phrases():
     expected = {
         "close_camera",
         "disk_space",
+        "discover_home_cameras",
         "get_time",
         "list_processes",
         "list_timers",
@@ -472,13 +473,15 @@ def check_ungated_tools_list_and_progress_phrases():
         raise AssertionError("look_camera should announce a short safe progress phrase")
     if fw.phrase_before_ungated_tool("get_time") is not None:
         raise AssertionError("fast read-only tools should not add spoken latency")
+    if fw.phrase_before_ungated_tool("discover_home_cameras") != ("working", "working_checking"):
+        raise AssertionError("camera discovery should announce a short checking phrase")
     return f"{len(got)} ungated tools, progress phrase only where safe"
 
 
 def check_ungated_tier0_tools():
     """Tier 0 (pure read-only, no real-world effect) must stay ungated — confirming get_time
     every time would be needless friction with no safety benefit."""
-    tier0 = {"get_time", "disk_space", "system_status", "network_status", "list_processes", "list_timers"}
+    tier0 = {"get_time", "disk_space", "system_status", "network_status", "list_processes", "list_timers", "discover_home_cameras"}
     gated_overlap = tier0 & set(fw.CONFIRM_GATED)
     if gated_overlap:
         raise AssertionError(f"Tier-0 read-only tools should not be gated: {gated_overlap}")
@@ -1049,6 +1052,25 @@ def check_should_announce_cancel():
     return "cancel suppressed only on identical re-ask, announced in every other case"
 
 
+def check_home_camera_discovery_redacts_sensitive_fields():
+    payload = {"result": {
+        "device_type": "SMART.IPCAMERA", "device_model": "C210", "device_name": "Living",
+        "ip": "192.168.1.103", "mac": "54-AF-97-45-2D-C2", "firmware_version": "1.5.2",
+        "hardware_version": "1.0", "is_support_iot_cloud": True,
+        "mgt_encrypt_schm": {"is_support_https": True},
+        "device_id": "SECRET-ID", "owner": "SECRET-OWNER", "encrypt_info": {"key": "SECRET-KEY"},
+    }}
+    item = fw._home_camera.sanitize_discovery_result("192.168.1.103", payload)
+    if not item or item["model"] != "C210" or item["ip"] != "192.168.1.103":
+        raise AssertionError(f"camera metadata not parsed: {item}")
+    rendered = repr(item)
+    if any(secret in rendered for secret in ("SECRET-ID", "SECRET-OWNER", "SECRET-KEY")):
+        raise AssertionError("camera discovery leaked sensitive discovery fields")
+    if "discover_home_cameras" in fw.CONFIRM_GATED:
+        raise AssertionError("read-only camera discovery must stay ungated")
+    return "camera discovery metadata sanitized and ungated"
+
+
 def check_tool_schemas_match_tools():
     """TOOL_SCHEMAS and TOOLS are two independently maintained structures (schema for the
     model, function for execution) — this catches drift if a tool is added/removed from one
@@ -1572,6 +1594,7 @@ check("notify_hermes(writes file)", check_notify_hermes_writes_file)
 check("set_alarm(invalid)", check_set_alarm_invalid)
 check("set_alarm(rolls to next day)", check_set_alarm_schedules_next_day_if_passed)
 check("list_and_cancel_timers", check_list_and_cancel_timers)
+check("home_camera_discovery_redacts_sensitive_fields", check_home_camera_discovery_redacts_sensitive_fields)
 check("tool_schemas_match_tools", check_tool_schemas_match_tools)
 check("pack_args", check_pack_args)
 check("run_native_tools", check_run_native_tools)
