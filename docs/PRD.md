@@ -1,112 +1,172 @@
-# PRD: Friday AI Assistant
+# PRD — Friday AI Assistant
 
-**Project Owner:** คุณฟรี  
-**Project Orchestrator:** Antigravity (Antigravity Agent)  
-**Execution Engine:** Local Python Runtime & Ollama  
-**Created:** 2026-07-01  
-**Last Updated:** 2026-07-01  
+**Repository:** `Gutumrod/friday`  
+**Primary branch:** `master`  
+**Last Updated:** 2026-08-26  
+**Status:** Active development; implementation is staged on feature branches and not yet merged to `master`
 
----
+## 1. Product Objective
 
-## 1. Objective
+Friday is a Thai-first voice assistant that acts as the conversational front door for the owner's computer, agents, and smart-home environment.
 
-**ปัญหาที่ต้องการแก้:**
-- คุณฟรีต้องการผู้ช่วยระบบเสียงปัญญาประดิษฐ์ในคอมพิวเตอร์ส่วนตัวที่สามารถพูดคุยโต้ตอบภาษาไทยได้อย่างเป็นธรรมชาติ ไม่หน่วง ไม่สั่นเพี้ยนแบบมนุษย์ต่างดาว และไม่กินทรัพยากรการคำนวณของเครื่องจนเกินไป
-- โมเดลภายในเครื่อง (Local LLM) ปกติมีค่า Context Window สูง ทำให้กิน VRAM จนล้นไปรันบน CPU ส่งผลให้ตอบช้ามากจนเกิด Timeout
-- ต้องการระบบที่สั่งงาน ปิดเครื่อง หรือเรียกใช้เครื่องมือในคอมพิวเตอร์ได้โดยตรงผ่านเสียง
+The long-term product is not a single LLM script. Friday is the safety and execution boundary between natural-language requests and real-world actions.
 
-**เป้าหมาย:**
-- พัฒนา **Friday (F.R.I.D.A.Y.)** เอไอผู้ช่วยสาวเสียงธรรมชาติที่รองรับเสียงพูดภาษาไทย 100%
-- ปรับแต่งการตอบสนองให้รวดเร็ว (Latency < 2 วินาที)
-- สามารถคุยโต้ตอบ สั่งงาน และทำงานร่วมกับ Agent ตัวอื่นๆ ในเครื่อง (เช่น Hermes และ OpenClaw) ได้จริง
+Target architecture:
 
-**ขอบเขต:**
-- **อยู่ใน Scope:**
-  - การแปลงเสียงพูดเป็นข้อความไทย (STT) และแปลงกลับข้อความเป็นเสียงพูดผู้หญิงไทย (TTS)
-  - การเชื่อมต่อกับโมเดลภาษาผ่าน Local Ollama (`gemma4:31b-cloud` และ `ornith:9b`)
-  - ระบบลบไฟล์เสียงทับและเคลียร์ไฟล์เสียงขยะทันทีเพื่อไม่ให้เปลืองพื้นที่ฮาร์ดดิสก์
-  - ระบบจับเจตนาการปิดตัวผ่านเสียงและประมวลผลการปิดระบบโดยอัตโนมัติ
-- **ไม่อยู่ใน Scope:**
-  - การประมวลผลเสียงแบบ Multi-modal ในฝั่งคลาวด์ API เสียเงินแพงๆ (ในเฟสทดสอบจะใช้ Edge-TTS ฟรี และคีย์ Ollama ฟรีเป็นหลัก)
-
----
-
-## 2. Full System Architecture
-
-### Communication Flow
-```
-คุณฟรี (พูดใส่ไมค์) ➡️ STT (SpeechRecognition) ➡️ text ➡️ Friday Engine (Ollama: gemma4:31b-cloud) ➡️ text ➡️ TTS (Edge-TTS) ➡️ mp3 ➡️ ลำโพง (pygame) ➡️ คุณฟรี (ฟังเสียงตอบกลับ)
+```text
+Mic
+ -> STT
+ -> Friday conversation/runtime
+ -> LLM and/or Hermes reasoning
+ -> structured tool intent
+ -> Friday validation + Confirm Gate
+ -> local tool / Home Assistant / other approved executor
+ -> result
+ -> Friday TTS
 ```
 
-### Component Stack
+Core principles:
 
-| Component | Technology |
-|-----------|------------|
-| **Management** | Friday Python Engine (`friday_walkie_talkie.py`) |
-| **STT (หู)** | SpeechRecognition (Google Web Speech API) |
-| **Brain (สมอง)** | Ollama - `gemma4:31b-cloud` (หลัก) / `ornith:9b` (สำรอง) |
-| **TTS (ปาก)** | edge-tts (`th-TH-PremwadeeNeural` - เสียงภาษาไทยหญิงดั้งเดิม) |
-| **Audio Output** | pygame.mixer (สำหรับเล่นไฟล์ MP3 และหยุดเสียงทันที) |
-| **Data Store** | Obsidian-compatible vault (บันทึกความจำและประวัติการโต้ตอบ) |
-| **Infrastructure** | Windows 10, Miniconda Python 3.10 |
+- Friday owns execution of real-world side effects.
+- Hermes may reason, plan, or propose tool intent, but cannot bypass Friday validation.
+- Every side-effect tool is confirm-gated unless a future explicit policy says otherwise.
+- Home Assistant is the planned smart-home control plane; Friday should not encode vendor-specific IR/device behavior in its semantic command layer.
+- Secrets, paired keys, tokens, and machine-specific values must not be committed to source.
+- STT/TTS/providers must remain replaceable where practical.
 
----
+## 2. Current Production Baseline on `master`
 
-## 3. Detailed Implementation Steps
+The current runtime is Windows-oriented and remains turn-based.
 
-### Phase 1: Voice Dialogue Foundation (เสร็จสมบูรณ์แล้ว)
-- [x] ออกแบบโครงร่างพื้นฐานระบบพูดคุยสลับกันพูด (Walkie-Talkie Mode)
-- [x] เชื่อมต่อไมโครโฟน STT ภาษาไทย และลำโพงเล่นเสียงคำตอบผ่าน Pygame
-- [x] เพิ่มระบบ Overwrite และ Auto-cleanup เพื่อป้องกันไฟล์เสียงขยะกินพื้นที่เครื่อง
-- [x] แก้บั๊ก Edge-TTS อ่านคำแปลของอิโมจิ (เขียนฟิลเตอร์ดึงอิโมจิออกก่อนแปลงเสียง และปรับ Prompt ป้องกัน)
-- [x] แก้ปัญหาตัดคำพูดนายไวเกินไป (เพิ่ม `r.pause_threshold = 1.5` วินาที)
-- [x] แก้ปัญหาหน่วงช้า/Timeout ของ Ollama (จำกัด `num_ctx: 2048` เพื่อให้โหลดโมเดลรันบน GPU 100% สำเร็จ)
-- [x] สลับเปลี่ยนสมองหลักเป็นรุ่นคลาวด์ `gemma4:31b-cloud` ประสิทธิภาพดี ไม่กินแรมเครื่อง
-- [x] เพิ่มระบบ Retry loop สำหรับเชื่อมต่อเน็ตฝั่ง Ollama และ Edge-TTS เผื่อระบบสะดุด
-- [x] ทำระบบตรวจจับคำสั่งปิดเครื่องอัตโนมัติด้วยแท็กพิเศษ `[SHUTDOWN]` จากโมเดล
+```text
+Microphone
+ -> SpeechRecognition capture
+ -> Google Cloud STT (`th-TH`)
+ -> `recognize_google()` fallback on Cloud request failure
+ -> Ollama native structured function calling
+ -> Friday `TOOLS` / `TOOL_SCHEMAS`
+ -> `CONFIRM_GATED` for side effects
+ -> tool execution
+ -> JaiTTS local voice primary
+ -> Edge TTS fallback / explicit alternate voice
+ -> pygame playback
+```
 
-### Phase 2: Connecting with local tools ( Hermes & Mailbox integration) (กำลังดำเนินการ)
-- [ ] พัฒนาตัวถอดรหัสรูปแบบคำสั่งพิเศษจาก Friday เช่น `[TOOL: send_telegram("ข้อความ")]`
-- [ ] เชื่อมต่อระบบส่งคำสั่งงานไปยัง **Hermes Mailbox** (`D:\AI-Workspace\mailbox\inbox\hermes\`) เพื่อให้ระบบเอเจนต์ทำงานจริงได้
-- [ ] เพิ่มคำสั่งพื้นฐานในเครื่องให้ Friday สั่งงานได้ (เช่น เช็กพื้นที่ดิสก์, สั่งเปิดเว็บเบราว์เซอร์, หรือเปิดแอป Applio)
-- [ ] อัปเดต Prompt ให้ Friday ตอบตามจริงว่า "เปิดใช้เครื่องมือสำเร็จแล้ว" หรือ "ขัดข้อง" ตามผลลัพธ์การเรียกใช้จริง
+Current major capabilities include:
 
-### Phase 3: Real-time Interruptible Conversation (Gemini Live Style)
-- [ ] แยกรหัสการดักฟังและการพูดออกเป็นระบบ Asynchronous/Multi-threading
-- [ ] ใช้ Voice Activity Detection (VAD) ตรวจจับคลื่นเสียงของผู้พูดตลอดเวลา
-- [ ] เมื่อผู้ใช้พูดแทรกกลางคันขณะเล่นเสียง ให้สั่งหยุด `pygame.mixer.music.stop()` ทันทีเพื่อเปลี่ยนเป็นโหมดตั้งรับฟัง
+- Thai voice conversation
+- structured native tool calling
+- local computer tools
+- timers/alarms
+- memory/history vault
+- camera snapshot tools
+- LG webOS TV control
+- confirm-gated side effects
+- Hermes dispatch/notification and shadow-mode foundation
+- FastAPI service boundary and UI event stream
 
-### Phase 4: Local Offline 100% (Full Offline Hybrid)
-- [ ] ติดตั้งโมเดล Faster-Whisper (Tiny) รันแบบออฟไลน์บน GPU เครื่องสำหรับ STT
-- [ ] ต่อยอดหาโมเดล TTS ภาษาไทยที่มีขนาดเบาและน้ำเสียงนิ่งในเครื่องเพื่อถอด Edge-TTS ออก
+Important: older documentation that describes `[TOOL: ...]` text parsing, Edge-TTS as the primary voice, or Faster-Whisper as the current plan is historical and not authoritative.
 
----
+## 3. Product Boundaries
 
-## 4. Success Criteria
+### Friday responsibilities
 
-- [ ] สามารถคุยโต้ตอบภาษาไทยได้ถูกต้องอย่างต่อเนื่องโดยไม่ค้างเกิน 3 วินาที
-- [ ] สั่งงานระบบเครื่องมือภายนอก (ผ่านกล่องจดหมาย Hermes) ได้สำเร็จ 100%
-- [ ] ดักฟังและปิดการทำงานตัวเองได้อย่างเป็นธรรมชาติเมื่อสั่งอำลา
-- [ ] ขนาดโฟลเดอร์ไฟล์เสียงตอบกลับไม่เพิ่มขึ้นหลังสิ้นสุดการรันคุย
+- voice input/output orchestration
+- conversation state
+- structured tool exposure
+- schema/argument validation
+- confirmation and safety policy
+- local execution boundary
+- audit/latency evidence
+- dispatch to Hermes where appropriate
+- smart-home semantic commands through Home Assistant
 
----
+### Hermes responsibilities
 
-## 5. Risks & Mitigation
+- deeper reasoning and worker routing
+- asynchronous/complex work coordination where explicitly enabled
+- proposing validated tool intent in later phases
 
-| ความเสี่ยง | ผลกระทบ | วิธีแก้ |
-|-----------|----------|----------|
-| เซิร์ฟเวอร์ Edge-TTS บล็อก IP ชั่วคราว | ไม่มีเสียงออกลำโพง | เพิ่มโค้ด Retry Loop และมีตัวแปรสำรองเตรียมเชื่อมต่อ API อื่นๆ |
-| โมเดลคลาวด์ใน Ollama ตอบไม่เสถียร | คุยขาดช่วงชั่วคราว | มีระบบสลับไปรันโมเดล Local `ornith:9b` เป็นตัวสำรองทันทีหาก API คลาวด์ล่ม |
-| ดักฟังเสียงรบกวนรอบข้างผิดพลาด | เกิดการตัดประโยคซ้ำซ้อน | เพิ่มระยะเวลา `pause_threshold` และคาลิเบรตสัญญาณรบกวนตอนเริ่มโปรแกรมทุกรอบ |
+Hermes does not receive raw Home Assistant credentials and must not execute home-device actions directly.
 
----
+### Home Assistant responsibilities
 
-## 6. Related Documents
+- device/vendor integrations
+- entity state
+- smart-home service execution
+- persistent household automations/scenes
+- IR/device abstraction where possible
 
-- `PROJECT_CONTEXT.md` — ความคืบหน้าล่าสุดและการตั้งค่าไฟล์ในเครื่อง
-- [friday_walkie_talkie.py](file:///D:/AI-Workspace/projects/friday/src/friday_walkie_talkie.py) — สคริปต์ทำงานหลักในปัจจุบัน (ย้ายเข้า `src/` โดย Hermes 2026-07-02)
+Friday should communicate desired semantic state rather than raw IR codes, MAC addresses, or vendor commands.
 
----
+## 4. Current Development Tracks
 
-**สถานะ:** In Progress  
-**Priority:** High  
+Implementation is intentionally split into branches so work can be prepared while the owner machines are offline.
+
+```text
+master
+  -> feat/phase0-security-cleanup
+      -> feat/phase1-stt-provider-abstraction
+          -> feat/phase2-stt-benchmark-harness
+              -> feat/phase3-streaming-stt-contract
+          -> feat/phase4-home-assistant-foundation
+              -> feat/phase5-home-device-registry
+                  -> feat/phase6-smart-home-confirm-gated-tools
+                      -> feat/phase7-ir-legacy-ac-readiness
+                          -> feat/phase8-hermes-home-tool-intent-contract
+                              -> feat/phase9-remote-command-security-contract
+                                  -> feat/phase10-home-scene-orchestration
+```
+
+The STT streaming track and Home Assistant track can be reviewed independently after their shared prerequisites.
+
+## 5. Phase Goals
+
+| Phase | Goal | Current state |
+|---|---|---|
+| 0 | Remove committed machine/device credentials and fail closed | Code prepared; live Windows/TV gate pending |
+| 1 | Replaceable STT provider abstraction | Code prepared; runtime regression pending |
+| 2 | Real-owner Google vs Typhoon benchmark harness | Harness prepared; real audio dataset pending |
+| 3 | Streaming STT contract/state model | Contract prepared; production integration blocked by Phase 2 evidence |
+| 4 | Home Assistant authenticated read-only foundation | Code prepared; real HA gate pending |
+| 5 | Logical home-device registry and Thai aliases | Code prepared; real entity mapping pending |
+| 6 | Confirm-gated Home Assistant write tools | Code prepared; merge blocked by Phase 4/5 live gates |
+| 7 | Legacy AC / IR readiness | Runbook/readiness only; hardware pending |
+| 8 | Hermes home tool-intent validation contract | Validator prepared; no live execute path |
+| 9 | Remote command security contract | Policy/contract only; no public exposure enabled |
+| 10 | Home scene orchestration | Prepared on feature branch; must remain confirm-gated and HA-owned |
+
+## 6. Safety Requirements
+
+1. All side effects use `CONFIRM_GATED` unless explicitly approved otherwise.
+2. Unknown devices/tools/aliases fail closed; never guess.
+3. Credentials never appear in source, logs, history, prompts, or Hermes payloads.
+4. Remote access must require authenticated secure transport; do not expose unauthenticated Home Assistant/Friday endpoints to the public internet.
+5. A successful Home Assistant service call means only that the command was accepted; Friday must not claim the physical device definitely changed state unless verified.
+6. IR-controlled state may be assumed/uncertain because the original physical remote can change device state outside Friday/Home Assistant awareness.
+7. Production changes require regression tests and real-device evidence where hardware behavior is involved.
+
+## 7. Success Criteria
+
+Friday is successful when it can:
+
+- understand normal Thai and Thai-English commands reliably with measured latency
+- remain usable when one STT/TTS/cloud dependency degrades
+- expose tools through structured schemas rather than text parsing
+- prevent unintended side effects through confirmation and allowlists
+- delegate complex reasoning without giving Hermes direct execution bypasses
+- control supported household devices semantically through Home Assistant
+- preserve household automations even when Friday/Hermes/LLM is offline
+- provide enough evidence/logging to diagnose latency and execution failures
+
+## 8. Current Source-of-Truth Documents
+
+Read in this order:
+
+1. latest dated file in `handoff/`
+2. `docs/PROJECT_CONTEXT.md`
+3. `docs/FRIDAY_DEVELOPMENT_PLAN_2026-08-26.md`
+4. this PRD
+5. phase-specific evidence/contract documents on their feature branches
+
+Older dated plans remain useful as history, but they do not override the current context or latest handoff.

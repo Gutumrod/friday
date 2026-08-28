@@ -115,3 +115,18 @@ Both registered development devices were offline during implementation, so the f
 **Gate 0: PENDING LIVE REGRESSION**
 
 Do not start Phase 1 STT provider implementation until the live Windows/security/TV regression above passes and the owner approves moving on.
+
+## Live Verification Update — 2026-08-28
+
+Windows target machine is online and the pending Hermes redaction defect was retested.
+
+Results:
+- `python -m py_compile src/friday/hermes_client.py src/friday/core.py` — PASS
+- `python src/test_phase0_security.py` — **5/5 PASS**
+- `python src/test_tools.py hermes_shadow` — Hermes URL/Bearer redaction now PASS
+- full self-check completed **79/80 PASS**
+- only remaining full-suite failure is the pre-existing JaiTTS/Hugging Face runtime 401; it is not a Phase 0 security regression
+
+The validated redaction fix now bounds URL-token matching at URL/text delimiters and removes the complete Bearer credential rather than leaving the original token after a marker.
+
+Gate 0 remains **PENDING** until the historical LG paired key is rotated/re-paired and the final live TV/API regression is completed with the replacement key.
