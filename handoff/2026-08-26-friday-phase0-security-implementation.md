@@ -59,3 +59,16 @@ When the Windows machine is online:
 ## Next Phase
 
 Phase 1 — STT Provider Abstraction is planned but remains blocked until Phase 0 live regression passes and the owner approves the next implementation phase.
+
+## 2026-08-28 Live Gate Update
+
+- Phase 0 security regression: **5/5 PASS** on the Windows Friday machine.
+- Hermes error redaction defect: **fixed and PASS** after targeted/full self-check retest.
+- Full Friday self-check: **79/80 PASS**; the sole remaining failure is the unrelated JaiTTS/Hugging Face 401 runtime issue.
+- Do not mark Gate 0 PASS yet.
+
+Remaining Gate 0 blockers:
+1. rotate/re-pair the historical LG webOS client key
+2. store only the replacement key in local `.env`
+3. rerun live TV controls with the replacement key
+4. verify guarded API status/tools/confirm flow
