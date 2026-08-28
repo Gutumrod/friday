@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "devices": [
+    {
+      "id": "living_room_tv",
+      "aliases": ["ทีวีห้องนั่งเล่น", "ทีวีล่าง", "living room tv"],
+      "room": "living_room",
+      "entities": {
+        "primary": "media_player.living_room_tv"
+      },
+      "capabilities": ["read_state", "power", "media"]
+    },
+    {
+      "id": "downstairs_ac",
+      "aliases": ["แอร์ชั้นล่าง", "แอร์ล่าง", "downstairs ac"],
+      "room": "downstairs",
+      "entities": {
+        "primary": "climate.downstairs_ac"
+      },
+      "capabilities": ["read_state", "power", "temperature", "mode", "fan"]
+    },
+    {
+      "id": "upstairs_ac",
+      "aliases": ["แอร์ชั้นบน", "แอร์บน", "upstairs ac"],
+      "room": "upstairs",
+      "entities": {
+        "primary": "climate.upstairs_ac"
+      },
+      "capabilities": ["read_state", "power", "temperature", "mode", "fan"]
+    }
+  ]
+}
